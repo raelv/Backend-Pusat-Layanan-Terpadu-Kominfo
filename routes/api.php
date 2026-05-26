@@ -47,7 +47,7 @@ Route::post('/login', function (Request $request) {
         // JIKA USER BELUM ADA: AUTO REGISTER SEBAGAI OPD
         $user = \App\Models\User::create([
             'name' => explode('@', $request->email)[0],
-            'email' => $request->email, // <- DITAMBAHKAN BIAR GAK ERROR NULL
+            'email' => $request->email,
             'password' => bcrypt('opd123'),
             'role' => 'opd',
             'attendance_status' => 'Masuk'
@@ -81,14 +81,25 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // --- ROUTE KHUSUS STAFF ---
     Route::prefix('staff')->group(function () {
-        Route::post('/leave', [AttendanceController::class, 'submitLeave']); 
+        // FITUR IZIN/CUTI STAF (CRUD)
+        Route::get('/leaves', [AttendanceController::class, 'index']);
+        Route::post('/leave', [AttendanceController::class, 'submitLeave']);
+        Route::put('/leaves/{id}', [AttendanceController::class, 'update']);
+        Route::delete('/leaves/{id}', [AttendanceController::class, 'destroy']);
+        
+        // CLAIM TIKET
         Route::post('/tickets/{ticket}/claim', [TicketController::class, 'claimTicket']);
     });
 
-    // --- ROUTE KHUSUS ADMIN ---
+    // --- ROUTE KHUSUS ADMIN (MURNI MONITORING) ---
     Route::prefix('admin')->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index']);
         Route::get('/staff-monitoring', [DashboardController::class, 'monitorStaff']);
         Route::apiResource('services', ServiceController::class);
+        
+        // MONITORING IZIN STAF (Hanya bisa lihat, gak bisa ubah)
+        Route::get('/leaves', function() {
+            return \App\Models\Leave::with('user:id,name,role,attendance_status')->get();
+        });
     });
 });
