@@ -23,16 +23,13 @@ Route::post('/login', function (Request $request) {
 
     $email = $request->email;
 
-    // VALIDASI DOMAIN
     if (!str_ends_with($email, '@bontangkota.go.id')) {
         return response()->json(['message' => 'Akses Ditolak. Hanya email @bontangkota.go.id.'], 403);
     }
 
-    // CARI USER DI DATABASE
     $user = \App\Models\User::where('email', $email)->first();
 
     if ($user) {
-        // JIKA USER SUDAH ADA
         if (\Illuminate\Support\Facades\Auth::attempt(['email' => $email, 'password' => $request->password])) {
             $token = $user->createToken('api-token')->plainTextToken;
             return response()->json([
@@ -44,7 +41,6 @@ Route::post('/login', function (Request $request) {
             return response()->json(['message' => 'Password Salah!'], 401);
         }
     } else {
-        // JIKA USER BELUM ADA: AUTO REGISTER SEBAGAI OPD
         $user = \App\Models\User::create([
             'name' => explode('@', $request->email)[0],
             'email' => $request->email,
@@ -64,10 +60,13 @@ Route::post('/login', function (Request $request) {
     }
 });
 
+// PUBLIC ROUTE UNTUK PREVIEW PDF
+Route::get('tickets/{ticket}/preview-pdf', [TicketController::class, 'previewPdf']);
+
 // PROTECTED ROUTES (Butuh Token)
 Route::middleware('auth:sanctum')->group(function () {
     
-    // --- TIKET & TRACKING (Akses Umum) ---
+    // --- TIKET & TRACKING ---
     Route::apiResource('tickets', TicketController::class);
     Route::post('tickets/{ticket}/status', [TicketController::class, 'updateStatus']);
 
@@ -75,29 +74,29 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('tickets/{ticket}/comments', [TicketCommentController::class, 'index']);
     Route::post('tickets/{ticket}/comments', [TicketCommentController::class, 'store']);
 
-    // --- SKM & DOWNLOAD ---
+    // --- PDF, EXCEL & WORD ---
+    Route::get('tickets/{ticket}/export-pdf', [TicketController::class, 'downloadPdf']);
+    Route::get('tickets/export-excel', [TicketController::class, 'exportExcel']);
+    Route::get('tickets/{ticket}/export-word', [TicketController::class, 'exportWord']);
+
+    // --- SKM & DOWNLOAD LAINNYA ---
     Route::post('tickets/{ticket}/skm', [TicketController::class, 'submitSKM']);
     Route::get('tickets/{ticket}/download', [TicketController::class, 'downloadDocument']);
 
-    // --- ROUTE KHUSUS STAFF ---
+    // --- ROUTE KHUSUS STAF ---
     Route::prefix('staff')->group(function () {
-        // FITUR IZIN/CUTI STAF (CRUD)
         Route::get('/leaves', [AttendanceController::class, 'index']);
         Route::post('/leave', [AttendanceController::class, 'submitLeave']);
         Route::put('/leaves/{id}', [AttendanceController::class, 'update']);
         Route::delete('/leaves/{id}', [AttendanceController::class, 'destroy']);
-        
-        // CLAIM TIKET
         Route::post('/tickets/{ticket}/claim', [TicketController::class, 'claimTicket']);
     });
 
-    // --- ROUTE KHUSUS ADMIN (MURNI MONITORING) ---
+    // --- ROUTE KHUSUS ADMIN ---
     Route::prefix('admin')->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index']);
         Route::get('/staff-monitoring', [DashboardController::class, 'monitorStaff']);
         Route::apiResource('services', ServiceController::class);
-        
-        // MONITORING IZIN STAF (Hanya bisa lihat, gak bisa ubah)
         Route::get('/leaves', function() {
             return \App\Models\Leave::with('user:id,name,role,attendance_status')->get();
         });
