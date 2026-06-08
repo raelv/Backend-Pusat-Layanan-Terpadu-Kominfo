@@ -2,6 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Str;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Staff\AttendanceController;
@@ -14,36 +15,40 @@ use App\Http\Controllers\TicketCommentController;
 |--------------------------------------------------------------------------
 */
 
-// 1. LOGIN SSO (Mengecek domain resmi)
+// 1. LOGIN SSO (Menggunakan Email ATAU NIP)
 Route::post('/login', function (Request $request) {
     $request->validate([
-        'email' => 'required|email',
+        'login_id' => 'required', 
         'password' => 'required' 
     ]);
 
-    $email = $request->email;
+    // TAMBAHAN INI UNTUK HAPUS SPASI
+    $loginId = trim($request->login_id);
 
-    if (!str_ends_with($email, '@bontangkota.go.id')) {
+    // CEK APAKAH LOGIN PAKAI NIP ATAU EMAIL
+    $fieldType = filter_var($loginId, FILTER_VALIDATE_EMAIL) ? 'email' : 'nip';
+
+    if ($fieldType === 'email' && !str_ends_with($loginId, '@bontangkota.go.id')) {
         return response()->json(['message' => 'Akses Ditolak. Hanya email @bontangkota.go.id.'], 403);
     }
 
-    $user = \App\Models\User::where('email', $email)->first();
+    $user = \App\Models\User::where($fieldType, $loginId)->first();
 
     if ($user) {
-        if (\Illuminate\Support\Facades\Auth::attempt(['email' => $email, 'password' => $request->password])) {
+        if (\Illuminate\Support\Facades\Auth::attempt([$fieldType => $loginId, 'password' => $request->password])) {
             $token = $user->createToken('api-token')->plainTextToken;
-            return response()->json([
-                'message' => 'Login Berhasil',
-                'user' => $user,
-                'token' => $token
-            ]);
+            return response()->json(['message' => 'Login Berhasil', 'user' => $user, 'token' => $token]);
         } else {
             return response()->json(['message' => 'Password Salah!'], 401);
         }
     } else {
+        if ($fieldType === 'nip') {
+            return response()->json(['message' => 'NIP tidak terdaftar di sistem.'], 404);
+        }
+
         $user = \App\Models\User::create([
-            'name' => explode('@', $request->email)[0],
-            'email' => $request->email,
+            'name' => explode('@', $loginId)[0],
+            'email' => $loginId,
             'password' => bcrypt('opd123'),
             'role' => 'opd',
             'attendance_status' => 'Masuk'
@@ -52,11 +57,7 @@ Route::post('/login', function (Request $request) {
         \Illuminate\Support\Facades\Auth::login($user);
         $token = $user->createToken('api-token')->plainTextToken;
 
-        return response()->json([
-            'message' => 'Akun baru berhasil dibuat. Login Berhasil sebagai OPD.',
-            'user' => $user,
-            'token' => $token
-        ]);
+        return response()->json(['message' => 'Akun baru berhasil dibuat. Login Berhasil sebagai OPD.', 'user' => $user, 'token' => $token]);
     }
 });
 
@@ -66,6 +67,11 @@ Route::get('tickets/{ticket}/preview-pdf', [TicketController::class, 'previewPdf
 // PROTECTED ROUTES (Butuh Token)
 Route::middleware('auth:sanctum')->group(function () {
     
+    // --- EXPORT EXCEL & WORD ---
+    Route::get('tickets/export-excel', [TicketController::class, 'exportExcel']);
+    Route::get('tickets/{ticket}/export-word', [TicketController::class, 'exportWord']);
+    Route::get('tickets/{ticket}/export-pdf', [TicketController::class, 'downloadPdf']);
+
     // --- TIKET & TRACKING ---
     Route::apiResource('tickets', TicketController::class);
     Route::post('tickets/{ticket}/status', [TicketController::class, 'updateStatus']);
@@ -74,12 +80,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('tickets/{ticket}/comments', [TicketCommentController::class, 'index']);
     Route::post('tickets/{ticket}/comments', [TicketCommentController::class, 'store']);
 
-    // --- PDF, EXCEL & WORD ---
-    Route::get('tickets/{ticket}/export-pdf', [TicketController::class, 'downloadPdf']);
-    Route::get('tickets/export-excel', [TicketController::class, 'exportExcel']);
-    Route::get('tickets/{ticket}/export-word', [TicketController::class, 'exportWord']);
-
-    // --- SKM & DOWNLOAD LAINNYA ---
+    // --- SKM & DOWNLOAD ---
     Route::post('tickets/{ticket}/skm', [TicketController::class, 'submitSKM']);
     Route::get('tickets/{ticket}/download', [TicketController::class, 'downloadDocument']);
 
@@ -88,8 +89,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/leaves', [AttendanceController::class, 'index']);
         Route::post('/leave', [AttendanceController::class, 'submitLeave']);
         Route::put('/leaves/{id}', [AttendanceController::class, 'update']);
-        Route::delete('/leaves/{id}', [AttendanceController::class, 'destroy']);
+        Route::delete('/leaves/{id}', [AttendanceController::class, 'destroy']); // HAPUS YANG DI BAWAH INI YANG DUPLIKAT!
+        
         Route::post('/tickets/{ticket}/claim', [TicketController::class, 'claimTicket']);
+        Route::post('/tickets/{ticket}/approve-reject', [TicketController::class, 'approveOrRejectTicket']);
     });
 
     // --- ROUTE KHUSUS ADMIN ---

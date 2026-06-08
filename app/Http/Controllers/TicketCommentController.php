@@ -52,4 +52,4 @@ class TicketCommentController extends Controller
             ], 500);
         }
     }
-}
+} 

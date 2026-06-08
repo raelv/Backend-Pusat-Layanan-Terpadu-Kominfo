@@ -14,19 +14,37 @@ use PhpOffice\PhpWord\PhpWord;
 
 class TicketController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
         $user = Auth::user();
+        $query = Ticket::with(['service', 'staff', 'requester', 'comments.user']);
+
         if ($user->role === 'admin') {
-            return Ticket::with(['service', 'staff', 'requester', 'comments.user'])->get();
+            // Admin lihat semua
+        } elseif ($user->role === 'staff') {
+            $query->where('assigned_staff_id', $user->id)
+                  ->orWhere(function($q) {
+                      $q->whereNull('assigned_staff_id')
+                        ->whereIn('status', ['pending', 'queued']);
+                  });
+        } else {
+            $query->where('user_id', $user->id);
         }
-        if ($user->role === 'staff') {
-            return Ticket::where('assigned_staff_id', $user->id)
-                ->orWhere(function($query) {
-                    $query->whereNull('assigned_staff_id')->whereIn('status', ['pending', 'queued']);
-                })->with(['service', 'staff', 'requester', 'comments.user'])->get();
+
+        if ($request->has('service_type')) {
+            $type = $request->service_type;
+            $query->whereHas('service', function ($q) use ($type) {
+                if ($type === 'it') {
+                    $q->where('name', 'LIKE', '%Aplikasi%');
+                } elseif ($type === 'zoom') {
+                    $q->where('name', 'LIKE', '%Zoom%');
+                } elseif ($type === 'command_center') {
+                    $q->where('name', 'LIKE', '%Command Center%');
+                }
+            });
         }
-        return Ticket::where('user_id', $user->id)->with(['service', 'staff', 'requester', 'comments.user'])->get();
+
+        return $query->get();
     }
 
     public function show($id)
@@ -79,6 +97,38 @@ class TicketController extends Controller
         $ticket->status = 'assigned';
         $ticket->save();
         return response()->json(['message' => 'Tiket berhasil diambil', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
+    }
+
+    public function approveOrRejectTicket(Request $request, $id)
+    {
+        $request->validate([
+            'action' => 'required|in:approve,reject'
+        ]);
+
+        $user = Auth::user();
+        $ticket = Ticket::with('service')->find($id);
+        
+        if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
+
+        $serviceName = strtolower($ticket->service->name ?? '');
+        if (!str_contains($serviceName, 'zoom') && !str_contains($serviceName, 'command')) {
+            return response()->json(['message' => 'Aksi ini hanya untuk layanan Zoom atau Command Center.'], 403);
+        }
+
+        if (!is_null($ticket->assigned_staff_id)) {
+            return response()->json(['message' => 'Tiket sudah ditangani oleh staf lain.'], 403);
+        }
+
+        if ($request->action === 'approve') {
+            $ticket->assigned_staff_id = $user->id;
+            $ticket->status = 'approved_admin';
+            $ticket->save();
+            return response()->json(['message' => 'Layanan berhasil Diterima', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
+        } else {
+            $ticket->status = 'rejected';
+            $ticket->save();
+            return response()->json(['message' => 'Layanan Ditolak', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
+        }
     }
 
     public function previewPdf($id)
