@@ -19,6 +19,7 @@ class TicketController extends Controller
         $user = Auth::user();
         $query = Ticket::with(['service', 'staff', 'requester', 'comments.user']);
 
+        // Filter Berdasarkan Role
         if ($user->role === 'admin') {
             // Admin lihat semua
         } elseif ($user->role === 'staff') {
@@ -28,13 +29,13 @@ class TicketController extends Controller
                         ->whereIn('status', ['pending', 'queued']);
                   });
         } else {
-            // OPD boleh lihat tiket miliknya sendiri, ATAU tiket yang sedang di-antrikan (Waiting List)
             $query->where(function($q) use ($user) {
                 $q->where('user_id', $user->id) 
                   ->orWhereIn('status', ['pending', 'queued']);
             });
         }
 
+        // Filter Berdasarkan Tipe Layanan
         if ($request->has('service_type')) {
             $type = $request->service_type;
             $query->whereHas('service', function ($q) use ($type) {
@@ -46,6 +47,29 @@ class TicketController extends Controller
                     $q->where('name', 'LIKE', '%Command Center%');
                 }
             });
+        }
+
+        // ==========================================
+        // FITUR BARU: SEARCH DINAMIS (PRD TEMANMU)
+        // ==========================================
+        if ($request->has('search') && !empty($request->search)) {
+            $searchTerm = $request->search;
+            
+            if (is_numeric($searchTerm)) {
+                // EXACT MATCH: Jika yang dicari angka, cari persis sama dengan ID Tiket
+                $query->where('ticket_number', (int)$searchTerm);
+            } else {
+                // LIKE MATCH: Jika yang dicari huruf, cari di nama OPD, layanan, atau form data
+                $query->where(function($q) use ($searchTerm) {
+                    $q->whereHas('requester', function($q2) use ($searchTerm) {
+                        $q2->where('name', 'ILIKE', "%{$searchTerm}%");
+                    })
+                    ->orWhereHas('service', function($q2) use ($searchTerm) {
+                        $q2->where('name', 'ILIKE', "%{$searchTerm}%");
+                    })
+                    ->orWhere('form_data', 'ILIKE', "%{$searchTerm}%");
+                });
+            }
         }
 
         return $query->get();
@@ -76,7 +100,7 @@ class TicketController extends Controller
         return response()->json($ticket);
     }
 
-     public function store(Request $request)
+    public function store(Request $request)
     {
         $request->validate([
             'service_id' => 'required|exists:services,id',
@@ -89,26 +113,16 @@ class TicketController extends Controller
 
         $user = Auth::user(); 
 
-        $jumlahTiketSebelumnya = Ticket::where('user_id', $user->id)->count();
-        $nomorUrut = $jumlahTiketSebelumnya + 1;
-        $ticketNumber = 'Ticket #' . $nomorUrut . ' (' . $user->name . ')';
-
-        // --- LOGIKA SLA HYBRID SAAT TIKET DIBUAT ---
+        // LOGIKA SLA HYBRID
         $service = Service::find($request->service_id);
         $dueDate = null;
-        
-        // Cek apakah layanan ini Zoom atau Command Center
         $isScheduleBased = str_contains(strtolower($service->name), 'zoom') || str_contains(strtolower($service->name), 'command');
 
         if ($isScheduleBased && $service->sla_days > 0) {
-            // SLA TETAP: Langsung hitung due_date saat tiket dibuat
             $dueDate = now()->addDays($service->sla_days);
         }
-        // Jika Layanan IT/Web, due_date dibiarkan NULL (nanti diisi saat Staff claim)
-        // -----------------------------------------
 
         $ticket = Ticket::create([
-            'ticket_number' => $ticketNumber, 
             'service_id' => $request->service_id,
             'user_id' => $user->id, 
             'form_data' => $formData,
@@ -116,6 +130,10 @@ class TicketController extends Controller
             'schedule_start' => $request->schedule_start,
             'due_date' => $dueDate, 
         ]);
+        
+        // SIMPAN ANGKA SAJA (Tanpa teks "Ticket #")
+        $ticket->ticket_number = $ticket->id;
+        $ticket->save();
         
         return response()->json(['message' => 'Tiket berhasil dibuat', 'data' => $ticket->load(['service', 'requester'])], 201);
     }
@@ -126,36 +144,21 @@ class TicketController extends Controller
         $ticket = Ticket::find($id);
 
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
-        
-        if ($ticket->user_id !== $user->id) {
-            return response()->json(['message' => 'Hanya pemohon yang bisa mengubah permohonan ini.'], 403);
-        }
+        if ($ticket->user_id !== $user->id) return response()->json(['message' => 'Hanya pemohon yang bisa mengubah permohonan ini.'], 403);
+        if (!in_array($ticket->status, ['pending', 'queued'])) return response()->json(['message' => 'Tiket sudah diproses. Perubahan hanya bisa dilakukan melalui ruang diskusi.'], 403);
 
-        if (!in_array($ticket->status, ['pending', 'queued'])) {
-            return response()->json(['message' => 'Tiket sudah diproses. Perubahan hanya bisa dilakukan melalui ruang diskusi.'], 403);
-        }
-
-        $request->validate([
-            'form_data' => 'required', 
-            'schedule_start' => 'nullable|date',
-        ]);
-
+        $request->validate(['form_data' => 'required', 'schedule_start' => 'nullable|date']);
         $formData = $request->form_data;
         if (is_string($formData)) $formData = json_decode($formData, true);
 
         $ticket->form_data = $formData;
-        if ($request->has('schedule_start')) {
-            $ticket->schedule_start = $request->schedule_start;
-        }
+        if ($request->has('schedule_start')) $ticket->schedule_start = $request->schedule_start;
         $ticket->save();
 
         return response()->json(['message' => 'Permohonan berhasil diperbarui', 'data' => $ticket]);
     }
 
-    // ==========================================
-    // FITUR 3: PEMBATALAN PERMOHONAN OLEH OPD
-    // ==========================================
-     public function updateStatus(Request $request, $id)
+    public function updateStatus(Request $request, $id)
     {
         $request->validate(['status' => 'required|in:pending,queued,approved_admin,assigned,in_progress,completed,rejected,cancelled,expired']);
         $user = Auth::user();
@@ -163,12 +166,8 @@ class TicketController extends Controller
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
         
         if ($request->status === 'cancelled' && $user->role === 'opd') {
-            if ($ticket->user_id !== $user->id) {
-                return response()->json(['message' => 'Akses ditolak.'], 403);
-            }
-            if (!in_array($ticket->status, ['pending', 'queued'])) {
-                return response()->json(['message' => 'Gagal membatalkan. Tiket yang sedang/d sudah diproses tidak bisa dibatalkan langsung.'], 403);
-            }
+            if ($ticket->user_id !== $user->id) return response()->json(['message' => 'Akses ditolak.'], 403);
+            if (!in_array($ticket->status, ['pending', 'queued'])) return response()->json(['message' => 'Gagal membatalkan. Tiket yang sedang/d sudah diproses tidak bisa dibatalkan langsung.'], 403);
             $ticket->status = 'cancelled';
             $ticket->save();
             return response()->json(['message' => 'Permohonan berhasil dibatalkan oleh OPD', 'data' => $ticket]);
@@ -178,25 +177,16 @@ class TicketController extends Controller
         if ($user->role === 'staff' && $ticket->assigned_staff_id !== $user->id) return response()->json(['message' => 'Akses ditolak.'], 403);
         
         $ticket->status = $request->status;
-
-        // LOGIKA BARU: Catat waktu selesai jika statusnya completed
-        if ($request->status === 'completed') {
-            $ticket->completed_at = now();
-        }
+        if ($request->status === 'completed') $ticket->completed_at = now();
 
         $ticket->save();
         return response()->json(['message' => 'Status tiket berhasil diperbarui', 'data' => $ticket]);
     }
 
-        public function claimTicket(Request $request, $id)
+    public function claimTicket(Request $request, $id)
     {
         $user = Auth::user();
-
-        // === VALIDASI BARU: CEK KEHADIRAN STAFF ===
-        if ($user->attendance_status !== 'Masuk') {
-            return response()->json(['message' => 'Gagal mengambil tugas. Status kehadiran Anda saat ini tidak "Masuk" (Cuti/Izin/Sakit).'], 403);
-        }
-        // ==========================================
+        if ($user->attendance_status !== 'Masuk') return response()->json(['message' => 'Gagal mengambil tugas. Status kehadiran Anda saat ini tidak "Masuk" (Cuti/Izin/Sakit).'], 403);
 
         $ticket = Ticket::with('service')->find($id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
@@ -205,9 +195,7 @@ class TicketController extends Controller
         $serviceName = strtolower($ticket->service->name ?? '');
         $isScheduleBased = str_contains($serviceName, 'zoom') || str_contains($serviceName, 'command');
 
-        if ($isScheduleBased) {
-            // Zoom/CC tidak perlu estimasi
-        } else {
+        if (!$isScheduleBased) {
             $request->validate(['estimated_days' => 'required|integer|min:1']);
             $ticket->estimated_days = $request->estimated_days;
             $ticket->due_date = now()->addDays($request->estimated_days);
@@ -216,30 +204,21 @@ class TicketController extends Controller
         $ticket->assigned_staff_id = $user->id;
         $ticket->assigned_at = now();
         $ticket->status = 'assigned';
-        
         $ticket->save();
+        
         return response()->json(['message' => 'Tiket berhasil diambil', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
     }
     
     public function approveOrRejectTicket(Request $request, $id)
     {
-        $request->validate([
-            'action' => 'required|in:approve,reject'
-        ]);
-
+        $request->validate(['action' => 'required|in:approve,reject']);
         $user = Auth::user();
         $ticket = Ticket::with('service')->find($id);
         
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
-
         $serviceName = strtolower($ticket->service->name ?? '');
-        if (!str_contains($serviceName, 'zoom') && !str_contains($serviceName, 'command')) {
-            return response()->json(['message' => 'Aksi ini hanya untuk layanan Zoom atau Command Center.'], 403);
-        }
-
-        if (!is_null($ticket->assigned_staff_id)) {
-            return response()->json(['message' => 'Tiket sudah ditangani oleh staf lain.'], 403);
-        }
+        if (!str_contains($serviceName, 'zoom') && !str_contains($serviceName, 'command')) return response()->json(['message' => 'Aksi ini hanya untuk layanan Zoom atau Command Center.'], 403);
+        if (!is_null($ticket->assigned_staff_id)) return response()->json(['message' => 'Tiket sudah ditangani oleh staf lain.'], 403);
 
         if ($request->action === 'approve') {
             $ticket->assigned_staff_id = $user->id;
@@ -257,14 +236,15 @@ class TicketController extends Controller
     {
         $ticket = Ticket::with(['service', 'staff', 'requester'])->find($id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
-        return Pdf::loadView('pdf.bukti-layanan', compact('ticket'))->setPaper('A4', 'portrait')->stream('Bukti_Layanan_'.str_replace(' ', '_', $ticket->ticket_number).'.pdf');
+        // TAMBAHKAN "Ticket #" DI SINI
+        return Pdf::loadView('pdf.bukti-layanan', compact('ticket'))->setPaper('A4', 'portrait')->stream('Bukti_Layanan_Ticket_'.$ticket->ticket_number.'.pdf');
     }
 
     public function downloadPdf($id)
     {
         $ticket = Ticket::with(['service', 'staff', 'requester'])->find($id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
-        return Pdf::loadView('pdf.bukti-layanan', compact('ticket'))->setPaper('A4', 'portrait')->download('Bukti_Layanan_'.str_replace(' ', '_', $ticket->ticket_number).'.pdf');
+        return Pdf::loadView('pdf.bukti-layanan', compact('ticket'))->setPaper('A4', 'portrait')->download('Bukti_Layanan_Ticket_'.$ticket->ticket_number.'.pdf');
     }
 
     public function exportExcel()
@@ -280,14 +260,16 @@ class TicketController extends Controller
         $phpWord = new PhpWord();
         $section = $phpWord->addSection();
         $section->addText('BUKTI PENERIMAAN LAYANAN', ['bold' => true, 'size' => 16, 'alignment' => 'center']);
-        $section->addText('Nomor: ' . $ticket->ticket_number, ['size' => 11, 'alignment' => 'center']);
+        
+        // TAMBAHKAN "Ticket #" DI SINI
+        $section->addText('Nomor: Ticket #' . $ticket->ticket_number, ['size' => 11, 'alignment' => 'center']);
         $section->addTextBreak(1);
         $section->addText('Hari / Tanggal    : ' . \Carbon\Carbon::parse($ticket->created_at)->translatedFormat('l, d F Y'));
         $section->addText('Jenis Layanan      : ' . ($ticket->service->name ?? 'N/A'));
         $section->addText('Status                : ' . strtoupper($ticket->status));
         $section->addText('Pelaksana Staf    : ' . ($ticket->staff->name ?? 'Belum Ditugaskan'));
         
-        $fileName = 'Bukti_Layanan_' . str_replace(' ', '_', $ticket->ticket_number) . '.docx';
+        $fileName = 'Bukti_Layanan_Ticket_' . $ticket->ticket_number . '.docx';
         $tempFilePath = storage_path($fileName);
         $phpWord->save($tempFilePath, 'Word2007');
         return response()->download($tempFilePath)->deleteFileAfterSend(true);

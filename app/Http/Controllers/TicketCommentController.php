@@ -26,7 +26,7 @@ class TicketCommentController extends Controller
         return response()->json($comments);
     }
 
-        public function store(Request $request, $ticket_id)
+    public function store(Request $request, $ticket_id)
     {
         $request->validate([
             'message' => 'nullable|string|max:2000',
@@ -63,8 +63,10 @@ class TicketCommentController extends Controller
                 'file_path' => $filePath,
             ]);
 
-            $nomorTiket = $ticket->ticket_number ?? 'Tiket #' . $ticket_id;
-            $nomorTiket = str_replace('Legacy-ID-', 'Tiket #', $nomorTiket);
+            // --- LOGIKA BARU: GABUNGKAN ANGKA DARI DB DENGAN TEKS ---
+            $nomorTiket = 'Ticket #' . ($ticket->ticket_number ?? $ticket_id);
+            // --------------------------------------------------------
+
             $role = strtoupper($comment->user->role ?? 'User');
             $lampiranInfo = $filePath ? "\n📎 *Lampiran:* File terunggah" : "";
 
