@@ -14,7 +14,8 @@ class Ticket extends Model
     protected $fillable = [
         'ticket_number',
         'user_id', 'service_id', 'assigned_staff_id', 
-        'form_data', 'schedule_start', 'schedule_end', 
+        'form_data', 'surat_permohonan_path', 'lampiran_tambahan_path', 
+        'schedule_start', 'schedule_end', 
         'due_date', 'assigned_at', 'estimated_days', 'completed_at', 
         'status', 'is_skm_filled'
     ];
@@ -58,30 +59,37 @@ class Ticket extends Model
     }
 
     // Teks estimasi untuk Frontend
-        // Teks estimasi untuk Frontend
     public function getSlaTextAttribute()
     {
-        // Jika tiket sudah selesai/dibatalkan/expired, tidak perlu tampilkan hitungan mundur
         if (in_array($this->status, ['completed', 'rejected', 'cancelled', 'expired'])) {
             return null; 
         }
 
-        // Jika ini layanan IT, dan belum di-claim oleh staff (due_date masih kosong)
         if (!$this->due_date && is_null($this->assigned_at)) {
             return 'Menunggu Estimasi Staff';
         }
 
-        // Jika melewati target waktu
         if ($this->is_overdue) {
             return 'Terlambat';
         }
 
-        // Jika sedang dalam pengerjaan dan belum terlambat
         if ($this->due_date) {
             $sisaHari = now()->diffInDays($this->due_date);
             return $sisaHari . ' Hari Kerja Lagi';
         }
 
         return null;
+    }
+
+    // Accessor URL Surat Permohonan
+    public function getSuratPermohonanUrlAttribute()
+    {
+        return $this->surat_permohonan_path ? \Illuminate\Support\Facades\Storage::url($this->surat_permohonan_path) : null;
+    }
+
+    // Accessor URL Lampiran Tambahan
+    public function getLampiranTambahanUrlAttribute()
+    {
+        return $this->lampiran_tambahan_path ? \Illuminate\Support\Facades\Storage::url($this->lampiran_tambahan_path) : null;
     }
 }

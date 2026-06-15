@@ -100,20 +100,16 @@ class TicketController extends Controller
         return response()->json($ticket);
     }
 
-    public function store(Request $request)
+        public function store(Request $request)
     {
         $user = Auth::user();
 
-        // ==========================================
         // 1. VALIDASI JAM OPERASIONAL UNTUK OPD
-        // ==========================================
         if ($user->role === 'opd') {
             $now = \Carbon\Carbon::now();
-            $startTime = \Carbon\Carbon::createFromTime(7, 30, 0); 
-            $endTime = \Carbon\Carbon::createFromTime(9, 0, 0);   
-
-            // Pengamanan: Cegah submit jika sudah melewati jam 21:55 (H-5 menit sebelum tutup)
-            $bufferTime = \Carbon\Carbon::createFromTime(8, 55, 0);
+            $startTime = \Carbon\Carbon::createFromTime(6, 30, 0); 
+            $endTime = \Carbon\Carbon::createFromTime(21, 0, 0);   
+            $bufferTime = \Carbon\Carbon::createFromTime(20, 55, 0);
 
             if ($now->lt($startTime) || $now->gt($bufferTime)) {
                 return response()->json([
@@ -122,42 +118,65 @@ class TicketController extends Controller
             }
         }
 
+        // 2. VALIDASI FORM & FILE (MIME TYPE & UKURAN)
         $request->validate([
             'service_id' => 'required|exists:services,id',
             'form_data' => 'required', 
             'schedule_start' => 'nullable|date',
+            'surat_permohonan' => 'required|file|mimes:pdf,jpg,jpeg,png|max:10240', // WAJIB
+            'lampiran_tambahan' => 'nullable|file|mimes:pdf,jpg,jpeg,png,docx,xlsx,zip|max:10240', // OPSIONAL
         ]);
         
         $formData = $request->form_data;
         if (is_string($formData)) $formData = json_decode($formData, true);
 
+        // 3. LOGIKA UPLOAD FILE
+        $suratPath = null;
+        $lampiranPath = null;
+
+        try {
+            if ($request->hasFile('surat_permohonan')) {
+                $suratPath = $request->file('surat_permohonan')->store('surat_permohonan', 'public');
+            }
+            if ($request->hasFile('lampiran_tambahan')) {
+                $lampiranPath = $request->file('lampiran_tambahan')->store('lampiran_tambahan', 'public');
+            }
+        } catch (\Exception $e) {
+            // Hapus file yang mungkin sudah terupload sebelum error
+            if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
+            return response()->json(['message' => 'Gagal mengupload file surat permohonan.', 'error' => $e->getMessage()], 500);
+        }
+
+        // 4. LOGIKA SLA & SIMPAN TIKET
         $service = Service::find($request->service_id);
+        $dueDate = null;
         $isScheduleBased = str_contains(strtolower($service->name), 'zoom') || str_contains(strtolower($service->name), 'command');
 
-        // ==========================================
-        // 2. VALIDASI JADWAL BOOKING (ZOOM / COMMAND CENTER)
-        // ==========================================
+        if ($isScheduleBased && $service->sla_days > 0) {
+            $dueDate = now()->addDays($service->sla_days);
+        }
+
         if ($isScheduleBased && $request->has('schedule_start')) {
             $scheduleTime = \Carbon\Carbon::parse($request->schedule_start);
-            $startTime = \Carbon\Carbon::createFromTime(7, 30, 0); 
-            $endTime = \Carbon\Carbon::createFromTime(9, 0, 0);   
-
+            $startTime = \Carbon\Carbon::createFromTime(6, 30, 0); 
+            $endTime = \Carbon\Carbon::createFromTime(21, 0, 0);   
             if ($scheduleTime->lt($startTime) || $scheduleTime->gt($endTime)) {
+                // Hapus file yang sudah ke-upload karena validasi jadwal gagal
+                if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
+                if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
+                
                 return response()->json([
                     'message' => 'Jam pelaksanaan yang dipilih di luar jam operasional (07:30 - 22:00). Silakan pilih jam lain.'
                 ], 422);
             }
         }
 
-        $dueDate = null;
-        if ($isScheduleBased && $service->sla_days > 0) {
-            $dueDate = now()->addDays($service->sla_days);
-        }
-
         $ticket = Ticket::create([
             'service_id' => $request->service_id,
             'user_id' => $user->id, 
             'form_data' => $formData,
+            'surat_permohonan_path' => $suratPath, // SIMPAN PATH FILE
+            'lampiran_tambahan_path' => $lampiranPath, // SIMPAN PATH FILE
             'status' => 'pending', 
             'schedule_start' => $request->schedule_start,
             'due_date' => $dueDate, 
@@ -169,21 +188,58 @@ class TicketController extends Controller
         return response()->json(['message' => 'Tiket berhasil dibuat', 'data' => $ticket->load(['service', 'requester'])], 201);
     }
 
-    public function update(Request $request, $id)
+        public function update(Request $request, $id)
     {
         $user = Auth::user();
         $ticket = Ticket::find($id);
 
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
-        if ($ticket->user_id !== $user->id) return response()->json(['message' => 'Hanya pemohon yang bisa mengubah permohonan ini.'], 403);
-        if (!in_array($ticket->status, ['pending', 'queued'])) return response()->json(['message' => 'Tiket sudah diproses. Perubahan hanya bisa dilakukan melalui ruang diskusi.'], 403);
+        
+        if ($ticket->user_id !== $user->id) {
+            return response()->json(['message' => 'Hanya pemohon yang bisa mengubah permohonan ini.'], 403);
+        }
 
-        $request->validate(['form_data' => 'required', 'schedule_start' => 'nullable|date']);
+        // ==========================================
+        // VALIDASI BARU: TOLAK EDIT JIKA SUDAH DIBATALKAN
+        // ==========================================
+        if ($ticket->status === 'cancelled') {
+            return response()->json(['message' => 'Tiket yang sudah dibatalkan tidak dapat diubah.'], 403);
+        }
+
+        if (!in_array($ticket->status, ['pending', 'queued'])) {
+            return response()->json(['message' => 'Tiket sudah diproses. Perubahan hanya bisa dilakukan melalui ruang diskusi.'], 403);
+        }
+
+        $request->validate([
+            'form_data' => 'required', 
+            'schedule_start' => 'nullable|date',
+            'surat_permohonan' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240', // Opsional saat edit
+            'lampiran_tambahan' => 'nullable|file|mimes:pdf,jpg,jpeg,png,docx,xlsx,zip|max:10240',
+        ]);
+
         $formData = $request->form_data;
         if (is_string($formData)) $formData = json_decode($formData, true);
 
+        // Handle upload file baru (jika ada)
+        if ($request->hasFile('surat_permohonan')) {
+            // Hapus file lama jika ada
+            if ($ticket->surat_permohonan_path) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($ticket->surat_permohonan_path);
+            }
+            $ticket->surat_permohonan_path = $request->file('surat_permohonan')->store('surat_permohonan', 'public');
+        }
+
+        if ($request->hasFile('lampiran_tambahan')) {
+            if ($ticket->lampiran_tambahan_path) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($ticket->lampiran_tambahan_path);
+            }
+            $ticket->lampiran_tambahan_path = $request->file('lampiran_tambahan')->store('lampiran_tambahan', 'public');
+        }
+
         $ticket->form_data = $formData;
-        if ($request->has('schedule_start')) $ticket->schedule_start = $request->schedule_start;
+        if ($request->has('schedule_start')) {
+            $ticket->schedule_start = $request->schedule_start;
+        }
         $ticket->save();
 
         return response()->json(['message' => 'Permohonan berhasil diperbarui', 'data' => $ticket]);

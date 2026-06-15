@@ -1,61 +1,31 @@
 <?php
 
-namespace App\Console\Commands;
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
-use Illuminate\Console\Command;
-use App\Models\Ticket;
-use App\Models\Service;
-use Carbon\Carbon;
-use Illuminate\Support\Facades\Log;
-
-class CheckSlaCommand extends Command
+return new class extends Migration
 {
-    protected $signature = 'tickets:check-sla';
-    protected $description = 'Cek SLA terlambat, kirim reminder, dan auto-expired tiket Zoom/Command Center';
-
-    public function handle()
+    public function up(): void
     {
-        $this->info('Memulai pengecekan SLA...');
+        Schema::table('tickets', function (Blueprint $table) {
+            $table->dateTime('due_date')->nullable()->after('schedule_end');
+        });
 
-        // 1. AUTO EXPIRED (Khusus Zoom / Command Center yang jadwalnya sudah lewat)
-        $services = Service::where('name', 'LIKE', '%Zoom%')
-                          ->orWhere('name', 'LIKE', '%Command Center%')
-                          ->pluck('id');
-
-        $expiredTickets = Ticket::whereIn('service_id', $services)
-            ->whereNotNull('schedule_start')
-            ->where('schedule_start', '<', Carbon::now())
-            ->whereIn('status', ['pending', 'queued', 'approved_admin'])
-            ->get();
-
-        foreach ($expiredTickets as $ticket) {
-            $ticket->update(['status' => 'expired']);
-            $this->warn("Tiket {$ticket->ticket_number} EXPIRED (Jadwal sudah lewat).");
-            
-            // Kirim notif telegram kalau perlu
-            // \App\Jobs\SendTelegramJob::dispatch("⚠️ Tiket {$ticket->ticket_number} otomatis EXPIRED.");
-        }
-
-        // 2. REMINDER TERLAMBAT (Kirim peringatan kalau melewati due_date tapi belum selesai)
-        $overdueTickets = Ticket::whereNotNull('due_date')
-            ->where('due_date', '<', Carbon::now())
-            ->whereNotIn('status', ['completed', 'rejected', 'cancelled', 'expired'])
-            ->get();
-
-        foreach ($overdueTickets as $ticket) {
-            // Kirim notifikasi ke Group Telegram
-            $text = "🚨 *PERINGATAN SLA TERLAMBAT*\n"
-                  . "━━━━━━━━━━━━━━━━━━━\n"
-                  . "Ticket : *{$ticket->ticket_number}*\n"
-                  . "Status : *{$ticket->status}*\n"
-                  . "Batas  : " . $ticket->due_date->format('d M Y') . "\n"
-                  . "━━━━━━━━━━━━━━━━━━━";
-            
-            \App\Jobs\SendTelegramJob::dispatch($text);
-            $this->warn("Reminder terkirim untuk Tiket {$ticket->ticket_number}");
-        }
-
-        $this->info('Pengecekan SLA selesai.');
-        return 0;
+        DB::statement("ALTER TABLE tickets ALTER COLUMN status TYPE VARCHAR(255)");
+        DB::statement("ALTER TABLE tickets ALTER COLUMN status SET DEFAULT 'pending'");
+        DB::statement("ALTER TABLE tickets ADD CONSTRAINT tickets_status_check CHECK (status::text IN ('pending','queued','approved_admin','assigned','in_progress','completed','rejected','cancelled','expired'))");
     }
-}
+
+    public function down(): void
+    {
+        DB::statement("ALTER TABLE tickets DROP CONSTRAINT tickets_status_check");
+        DB::statement("ALTER TABLE tickets ALTER COLUMN status TYPE text USING status::text");
+        DB::statement("ALTER TABLE tickets ADD CONSTRAINT tickets_status_check CHECK (status::text IN ('pending','queued','approved_admin','assigned','in_progress','completed','rejected','cancelled'))");
+        
+        Schema::table('tickets', function (Blueprint $table) {
+            $table->dropColumn('due_date');
+        });
+    }
+};
