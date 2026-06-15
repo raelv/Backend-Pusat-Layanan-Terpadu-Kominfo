@@ -67,10 +67,54 @@ Route::get('tickets/{ticket}/preview-pdf', [TicketController::class, 'previewPdf
 // PROTECTED ROUTES (Butuh Token)
 Route::middleware('auth:sanctum')->group(function () {
     
+    // --- CEK JAM OPERASIONAL & AKSES CEPAT LAYANAN (DIPASANG DI PALING ATAS AGAR UMUM) ---
+    Route::get('/operational-status', function () {
+        $now = \Carbon\Carbon::now();
+        $startTime = \Carbon\Carbon::createFromTime(7, 30, 0);
+        $endTime = \Carbon\Carbon::createFromTime(9, 0, 0);
+
+        $isOperational = $now->gte($startTime) && $now->lte($endTime);
+
+        return response()->json([
+            'is_operational' => $isOperational,
+            'message' => $isOperational ? 'Layanan aktif.' : 'Pengajuan layanan sedang ditutup. Jam operasional adalah 07:30 - 22:00.'
+        ]);
+    });
+
+    Route::get('/quick-services', function () {
+        $now = \Carbon\Carbon::now();
+        $startTime = \Carbon\Carbon::createFromTime(7, 30, 0);
+        $endTime = \Carbon\Carbon::createFromTime(9, 0, 0);
+
+        $isOperational = $now->gte($startTime) && $now->lte($endTime);
+
+        // Ambil data 3 layanan utama
+        $services = \App\Models\Service::select('id', 'name', 'slug', 'description')
+            ->where('is_active', true)
+            ->orderBy('name', 'asc')
+            ->get();
+
+        return response()->json([
+            'is_operational' => $isOperational,
+            'closure_message' => 'Layanan pengajuan telah ditutup dikarenakan jam operasionalnya telah selesai. (Jam Operasional: 07:30 - 22:00)',
+            'services' => $services
+        ]);
+    });
+
+    // --- DAFTAR AKUN (UNTUK DROPDOWN) ---
+    Route::get('/users', function (Request $request) {
+        $query = \App\Models\User::select('id', 'name', 'email', 'role', 'nip', 'attendance_status');
+        if ($request->has('role')) {
+            $query->where('role', $request->role);
+        }
+        return $query->orderBy('name', 'asc')->get();
+    });
+
     // --- EXPORT EXCEL & WORD ---
     Route::get('tickets/export-excel', [TicketController::class, 'exportExcel']);
     Route::get('tickets/{ticket}/export-word', [TicketController::class, 'exportWord']);
     Route::get('tickets/{ticket}/export-pdf', [TicketController::class, 'downloadPdf']);
+    Route::get('tickets/{ticket}/preview-pdf', [TicketController::class, 'previewPdf']);
 
     // --- TIKET & TRACKING ---
     Route::apiResource('tickets', TicketController::class);
@@ -89,7 +133,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/leaves', [AttendanceController::class, 'index']);
         Route::post('/leave', [AttendanceController::class, 'submitLeave']);
         Route::put('/leaves/{id}', [AttendanceController::class, 'update']);
-        Route::delete('/leaves/{id}', [AttendanceController::class, 'destroy']); // HAPUS YANG DI BAWAH INI YANG DUPLIKAT!
+        Route::delete('/leaves/{id}', [AttendanceController::class, 'destroy']); 
         
         Route::post('/tickets/{ticket}/claim', [TicketController::class, 'claimTicket']);
         Route::post('/tickets/{ticket}/approve-reject', [TicketController::class, 'approveOrRejectTicket']);
@@ -105,3 +149,12 @@ Route::middleware('auth:sanctum')->group(function () {
         });
     });
 });
+    // --- ROUTE KHUSUS ADMIN ---
+    Route::prefix('admin')->group(function () {
+        Route::get('/dashboard', [DashboardController::class, 'index']);
+        Route::get('/staff-monitoring', [DashboardController::class, 'monitorStaff']);
+        Route::apiResource('services', ServiceController::class);
+        Route::get('/leaves', function() {
+            return \App\Models\Leave::with('user:id,name,role,attendance_status')->get();
+        });
+    });

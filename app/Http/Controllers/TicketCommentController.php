@@ -26,75 +26,66 @@ class TicketCommentController extends Controller
         return response()->json($comments);
     }
 
-        public function store(Request $request)
+    public function store(Request $request, $ticket_id)
     {
-        $user = Auth::user();
-
-        // ==========================================
-        // 1. VALIDASI JAM OPERASIONAL UNTUK OPD
-        // ==========================================
-        if ($user->role === 'opd') {
-            $now = \Carbon\Carbon::now();
-            $startTime = \Carbon\Carbon::createFromTime(7, 30, 0); // 07:30
-            $endTime = \Carbon\Carbon::createFromTime(22, 0, 0);   // 22:00
-
-            // Cek apakah waktu sekarang di luar jam 07:30 - 22:00
-            if ($now->lt($startTime) || $now->gt($endTime)) {
-                return response()->json([
-                    'message' => 'Pengajuan layanan sedang ditutup. Jam operasional layanan adalah 07:30 - 22:00.'
-                ], 403);
-            }
-        }
-
-        // Validasi Form biasa
         $request->validate([
-            'service_id' => 'required|exists:services,id',
-            'form_data' => 'required', 
-            'schedule_start' => 'nullable|date',
+            'message' => 'nullable|string|max:2000',
+            'file' => 'nullable|file|mimes:jpg,jpeg,png,pdf,docx,xlsx|max:10240',
         ]);
-        
-        $formData = $request->form_data;
-        if (is_string($formData)) $formData = json_decode($formData, true);
 
-        // Ambil data layanan
-        $service = Service::find($request->service_id);
-        $isScheduleBased = str_contains(strtolower($service->name), 'zoom') || str_contains(strtolower($service->name), 'command');
+        $ticket = Ticket::find($ticket_id);
+        if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
 
-        // ==========================================
-        // 2. VALIDASI JADWAL BOOKING (ZOOM / COMMAND CENTER)
-        // ==========================================
-        if ($isScheduleBased && $request->has('schedule_start')) {
-            $scheduleTime = \Carbon\Carbon::parse($request->schedule_start);
-            $startTime = \Carbon\Carbon::createFromTime(7, 30, 0); // 07:30
-            $endTime = \Carbon\Carbon::createFromTime(22, 0, 0);   // 22:00
+        if (auth()->user()->role === 'opd' && $ticket->user_id !== auth()->id()) {
+            return response()->json(['message' => 'Akses ditolak. Bukan tiket Anda.'], 403);
+        }
 
-            // Cek apakah jam yang dipilih OPD di luar jam operasional
-            if ($scheduleTime->lt($startTime) || $scheduleTime->gt($endTime)) {
-                return response()->json([
-                    'message' => 'Jam pelaksanaan yang dipilih di luar jam operasional (07:30 - 22:00). Silakan pilih jam lain.'
-                ], 422);
+        if (is_null($ticket->assigned_staff_id)) {
+            return response()->json(['message' => 'Ruang diskusi belum bisa digunakan. Tiket belum ditangani oleh Staff.'], 403);
+        }
+
+        if (!$request->message && !$request->hasFile('file')) {
+            return response()->json(['message' => 'Pesan atau lampiran file harus diisi.'], 422);
+        }
+
+        try {
+            $filePath = null;
+            if ($request->hasFile('file')) {
+                $filePath = $request->file('file')->store('comments', 'public');
             }
-        }
 
-        // LOGIKA SLA HYBRID SAAT TIKET DIBUAT
-        $dueDate = null;
-        if ($isScheduleBased && $service->sla_days > 0) {
-            $dueDate = now()->addDays($service->sla_days);
-        }
+            $comment = TicketComment::create([
+                'ticket_id' => $ticket_id,
+                'user_id'   => auth()->id(),
+                'message'   => $request->message,
+                'file_path' => $filePath,
+            ]);
 
-        $ticket = Ticket::create([
-            'service_id' => $request->service_id,
-            'user_id' => $user->id, 
-            'form_data' => $formData,
-            'status' => 'pending', 
-            'schedule_start' => $request->schedule_start,
-            'due_date' => $dueDate, 
-        ]);
-        
-        // SIMPAN NOMOR TIKET GLOBAL
-        $ticket->ticket_number = $ticket->id;
-        $ticket->save();
-        
-        return response()->json(['message' => 'Tiket berhasil dibuat', 'data' => $ticket->load(['service', 'requester'])], 201);
+            $nomorTiket = 'Ticket #' . ($ticket->ticket_number ?? $ticket_id);
+            $role = strtoupper($comment->user->role ?? 'User');
+            $lampiranInfo = $filePath ? "\n📎 *Lampiran:* File terunggah" : "";
+
+            $text = "📩 *UPDATE CHAT TIKET*\n"
+                  . "━━━━━━━━━━━━━━━━━━━\n"
+                  . "Ticket : *{$nomorTiket}*\n"
+                  . "Dari   : *{$comment->user->name}* ({$role})\n"
+                  . "Pesan  : " . ($comment->message ?? '-')
+                  . "{$lampiranInfo}\n"
+                  . "━━━━━━━━━━━━━━━━━━━";
+
+            \App\Jobs\SendTelegramJob::dispatch($text);
+
+            return response()->json(
+                $comment->load('user:id,name,role'),
+                201
+            );
+
+        } catch (\Exception $e) {
+            if (isset($filePath)) Storage::disk('public')->delete($filePath);
+            return response()->json([
+                'message' => 'Gagal menyimpan komentar',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }

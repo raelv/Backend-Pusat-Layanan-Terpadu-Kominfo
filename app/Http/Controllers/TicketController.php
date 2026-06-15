@@ -102,6 +102,26 @@ class TicketController extends Controller
 
     public function store(Request $request)
     {
+        $user = Auth::user();
+
+        // ==========================================
+        // 1. VALIDASI JAM OPERASIONAL UNTUK OPD
+        // ==========================================
+        if ($user->role === 'opd') {
+            $now = \Carbon\Carbon::now();
+            $startTime = \Carbon\Carbon::createFromTime(7, 30, 0); 
+            $endTime = \Carbon\Carbon::createFromTime(9, 0, 0);   
+
+            // Pengamanan: Cegah submit jika sudah melewati jam 21:55 (H-5 menit sebelum tutup)
+            $bufferTime = \Carbon\Carbon::createFromTime(8, 55, 0);
+
+            if ($now->lt($startTime) || $now->gt($bufferTime)) {
+                return response()->json([
+                    'message' => 'Pengajuan layanan sedang ditutup. Jam operasional layanan adalah 07:30 - 22:00.'
+                ], 403);
+            }
+        }
+
         $request->validate([
             'service_id' => 'required|exists:services,id',
             'form_data' => 'required', 
@@ -111,13 +131,25 @@ class TicketController extends Controller
         $formData = $request->form_data;
         if (is_string($formData)) $formData = json_decode($formData, true);
 
-        $user = Auth::user(); 
-
-        // LOGIKA SLA HYBRID
         $service = Service::find($request->service_id);
-        $dueDate = null;
         $isScheduleBased = str_contains(strtolower($service->name), 'zoom') || str_contains(strtolower($service->name), 'command');
 
+        // ==========================================
+        // 2. VALIDASI JADWAL BOOKING (ZOOM / COMMAND CENTER)
+        // ==========================================
+        if ($isScheduleBased && $request->has('schedule_start')) {
+            $scheduleTime = \Carbon\Carbon::parse($request->schedule_start);
+            $startTime = \Carbon\Carbon::createFromTime(7, 30, 0); 
+            $endTime = \Carbon\Carbon::createFromTime(9, 0, 0);   
+
+            if ($scheduleTime->lt($startTime) || $scheduleTime->gt($endTime)) {
+                return response()->json([
+                    'message' => 'Jam pelaksanaan yang dipilih di luar jam operasional (07:30 - 22:00). Silakan pilih jam lain.'
+                ], 422);
+            }
+        }
+
+        $dueDate = null;
         if ($isScheduleBased && $service->sla_days > 0) {
             $dueDate = now()->addDays($service->sla_days);
         }
@@ -131,7 +163,6 @@ class TicketController extends Controller
             'due_date' => $dueDate, 
         ]);
         
-        // SIMPAN ANGKA SAJA (Tanpa teks "Ticket #")
         $ticket->ticket_number = $ticket->id;
         $ticket->save();
         
