@@ -15,7 +15,7 @@ use App\Http\Controllers\TicketCommentController;
 |--------------------------------------------------------------------------
 */
 
-// 1. LOGIN SSO (Menggunakan Email ATAU NIP)
+// ✅ FIX LOGIN: Hapus auto-create, wajib akun valid
 Route::post('/login', function (Request $request) {
     $request->validate([
         'login_id' => 'required', 
@@ -31,31 +31,24 @@ Route::post('/login', function (Request $request) {
 
     $user = \App\Models\User::where($fieldType, $loginId)->first();
 
-    if ($user) {
-        if (\Illuminate\Support\Facades\Auth::attempt([$fieldType => $loginId, 'password' => $request->password])) {
-            $token = $user->createToken('api-token')->plainTextToken;
-            return response()->json(['message' => 'Login Berhasil', 'user' => $user, 'token' => $token]);
-        } else {
-            return response()->json(['message' => 'Password Salah!'], 401);
-        }
-    } else {
-        if ($fieldType === 'nip') {
-            return response()->json(['message' => 'NIP tidak terdaftar di sistem.'], 404);
-        }
-
-        $user = \App\Models\User::create([
-            'name' => explode('@', $loginId)[0],
-            'email' => $loginId,
-            'password' => bcrypt('opd123'),
-            'role' => 'opd',
-            'attendance_status' => 'Masuk'
-        ]);
-
-        \Illuminate\Support\Facades\Auth::login($user);
-        $token = $user->createToken('api-token')->plainTextToken;
-
-        return response()->json(['message' => 'Akun baru berhasil dibuat. Login Berhasil sebagai OPD.', 'user' => $user, 'token' => $token]);
+    if (!$user) {
+        return response()->json([
+            'message' => 'Email/NIP atau Password tidak valid'
+        ], 401);
     }
+
+    if (!\Illuminate\Support\Facades\Auth::attempt([$fieldType => $loginId, 'password' => $request->password])) {
+        return response()->json([
+            'message' => 'Email/NIP atau Password tidak valid'
+        ], 401);
+    }
+
+    $token = $user->createToken('api-token')->plainTextToken;
+    return response()->json([
+        'message' => 'Login Berhasil', 
+        'user' => $user, 
+        'token' => $token
+    ]);
 });
 
 // PUBLIC ROUTE UNTUK PREVIEW PDF
@@ -66,9 +59,10 @@ Route::middleware('auth:sanctum')->group(function () {
     
     // --- CEK JAM OPERASIONAL & AKSES CEPAT LAYANAN ---
     Route::get('/operational-status', function () {
-        $now = \Carbon\Carbon::now();
-        $startTime = \Carbon\Carbon::createFromTime(6, 30, 0);
-        $endTime = \Carbon\Carbon::createFromTime(21, 0, 0);
+        // ✅ FIX TIMEZONE WITA
+        $now = \Carbon\Carbon::now('Asia/Makassar');
+        $startTime = \Carbon\Carbon::createFromTime(7, 30, 0, 'Asia/Makassar');
+        $endTime = \Carbon\Carbon::createFromTime(22, 0, 0, 'Asia/Makassar');
 
         $isOperational = $now->gte($startTime) && $now->lte($endTime);
 
@@ -79,9 +73,10 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     Route::get('/quick-services', function () {
-        $now = \Carbon\Carbon::now();
-        $startTime = \Carbon\Carbon::createFromTime(6, 30, 0);
-        $endTime = \Carbon\Carbon::createFromTime(21, 0, 0);
+        // ✅ FIX TIMEZONE WITA
+        $now = \Carbon\Carbon::now('Asia/Makassar');
+        $startTime = \Carbon\Carbon::createFromTime(7, 30, 0, 'Asia/Makassar');
+        $endTime = \Carbon\Carbon::createFromTime(22, 0, 0, 'Asia/Makassar');
 
         $isOperational = $now->gte($startTime) && $now->lte($endTime);
 
@@ -113,7 +108,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // --- TIKET & TRACKING ---
     Route::apiResource('tickets', TicketController::class);
-    Route::post('tickets/{ticket}/status', [TicketController::class, 'updateStatus']);
+    Route::match(['put', 'post'], 'tickets/{ticket}/status', [TicketController::class, 'updateStatus']);
 
     // --- DISKUSI / KOMENTAR ---
     Route::get('tickets/{ticket}/comments', [TicketCommentController::class, 'index']);

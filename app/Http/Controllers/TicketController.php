@@ -100,16 +100,17 @@ class TicketController extends Controller
         return response()->json($ticket);
     }
 
-        public function store(Request $request)
+    public function store(Request $request)
     {
         $user = Auth::user();
 
         // 1. VALIDASI JAM OPERASIONAL UNTUK OPD
         if ($user->role === 'opd') {
-            $now = \Carbon\Carbon::now();
-            $startTime = \Carbon\Carbon::createFromTime(6, 30, 0); 
-            $endTime = \Carbon\Carbon::createFromTime(21, 0, 0);   
-            $bufferTime = \Carbon\Carbon::createFromTime(20, 55, 0);
+            // ✅ FIX TIMEZONE WITA
+            $now = \Carbon\Carbon::now('Asia/Makassar');
+            $startTime = \Carbon\Carbon::createFromTime(7, 30, 0, 'Asia/Makassar'); 
+            $endTime = \Carbon\Carbon::createFromTime(22, 0, 0, 'Asia/Makassar');   
+            $bufferTime = \Carbon\Carbon::createFromTime(21, 55, 0, 'Asia/Makassar');
 
             if ($now->lt($startTime) || $now->gt($bufferTime)) {
                 return response()->json([
@@ -157,9 +158,10 @@ class TicketController extends Controller
         }
 
         if ($isScheduleBased && $request->has('schedule_start')) {
-            $scheduleTime = \Carbon\Carbon::parse($request->schedule_start);
-            $startTime = \Carbon\Carbon::createFromTime(6, 30, 0); 
-            $endTime = \Carbon\Carbon::createFromTime(21, 0, 0);   
+            // ✅ FIX TIMEZONE WITA
+            $scheduleTime = \Carbon\Carbon::parse($request->schedule_start, 'Asia/Makassar');
+            $startTime = \Carbon\Carbon::createFromTime(7, 30, 0, 'Asia/Makassar'); 
+            $endTime = \Carbon\Carbon::createFromTime(22, 0, 0, 'Asia/Makassar');   
             if ($scheduleTime->lt($startTime) || $scheduleTime->gt($endTime)) {
                 // Hapus file yang sudah ke-upload karena validasi jadwal gagal
                 if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
@@ -188,7 +190,7 @@ class TicketController extends Controller
         return response()->json(['message' => 'Tiket berhasil dibuat', 'data' => $ticket->load(['service', 'requester'])], 201);
     }
 
-        public function update(Request $request, $id)
+    public function update(Request $request, $id)
     {
         $user = Auth::user();
         $ticket = Ticket::find($id);
@@ -245,26 +247,67 @@ class TicketController extends Controller
         return response()->json(['message' => 'Permohonan berhasil diperbarui', 'data' => $ticket]);
     }
 
-    public function updateStatus(Request $request, $id)
+    public function updateStatus(Request $request, $detail_id)
     {
-        $request->validate(['status' => 'required|in:pending,queued,approved_admin,assigned,in_progress,completed,rejected,cancelled,expired']);
+        // ==========================================
+        // FIX: TAMBAHKAN 'approved_by_opd' DI SINI
+        // ==========================================
+        $request->validate([
+            'status' => 'required|in:pending,queued,approved_admin,approved_by_opd,pending_opd_approval,assigned,in_progress,completed,rejected,rejected_by_opd,cancelled,expired'
+        ]);
+        
         $user = Auth::user();
-        $ticket = Ticket::find($id);
+        $ticket = Ticket::find($detail_id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
         
+        // ==========================================
+        // 1. LOGIKA PERSETUJUAN ESTIMASI OLEH OPD
+        // ==========================================
+        if ($request->status === 'approved_by_opd' && $user->role === 'opd') {
+            if ($ticket->user_id !== $user->id) return response()->json(['message' => 'Akses ditolak.'], 403);
+            if ($ticket->status !== 'pending_opd_approval') {
+                return response()->json(['message' => 'Tidak bisa menyetujui. Status tiket bukan "Menunggu Persetujuan OPD".'], 422);
+            }
+            $ticket->status = 'assigned'; 
+            $ticket->save();
+            return response()->json(['message' => 'Estimasi disetujui OPD. Tiket siap dikerjakan.', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
+        }
+
+        // ==========================================
+        // 2. LOGIKA PENOLAKAN ESTIMASI OLEH OPD
+        // ==========================================
+        if ($request->status === 'rejected_by_opd' && $user->role === 'opd') {
+            if ($ticket->user_id !== $user->id) return response()->json(['message' => 'Akses ditolak.'], 403);
+            if ($ticket->status !== 'pending_opd_approval') {
+                return response()->json(['message' => 'Tidak bisa menolak. Status tiket bukan "Menunggu Persetujuan OPD".'], 422);
+            }
+            $ticket->status = 'rejected'; 
+            $ticket->assigned_staff_id = null;
+            $ticket->save();
+            return response()->json(['message' => 'Estimasi ditolak oleh OPD. Tiket kembali ke antrian.', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
+        }
+
+        // ==========================================
+        // 3. LOGIKA PEMBATALAN TIKET OLEH OPD
+        // ==========================================
         if ($request->status === 'cancelled' && $user->role === 'opd') {
             if ($ticket->user_id !== $user->id) return response()->json(['message' => 'Akses ditolak.'], 403);
-            if (!in_array($ticket->status, ['pending', 'queued'])) return response()->json(['message' => 'Gagal membatalkan. Tiket yang sedang/d sudah diproses tidak bisa dibatalkan langsung.'], 403);
+            if (!in_array($ticket->status, ['pending', 'queued', 'pending_opd_approval'])) {
+                return response()->json(['message' => 'Gagal membatalkan. Tiket yang sudah diproses tidak bisa dibatalkan langsung.'], 403);
+            }
             $ticket->status = 'cancelled';
             $ticket->save();
             return response()->json(['message' => 'Permohonan berhasil dibatalkan oleh OPD', 'data' => $ticket]);
         }
 
+        // ==========================================
+        // 4. LOGIKA UPDATE STATUS OLEH STAFF
+        // ==========================================
         if ($user->role === 'admin') return response()->json(['message' => 'Akses ditolak.'], 403);
         if ($user->role === 'staff' && $ticket->assigned_staff_id !== $user->id) return response()->json(['message' => 'Akses ditolak.'], 403);
         
         $ticket->status = $request->status;
-        if ($request->status === 'completed') $ticket->completed_at = now();
+        if ($request->status === 'completed') $ticket->completed_at = $ticket->status === 'completed' ? now() : null;
 
         $ticket->save();
         return response()->json(['message' => 'Status tiket berhasil diperbarui', 'data' => $ticket]);
@@ -273,7 +316,9 @@ class TicketController extends Controller
     public function claimTicket(Request $request, $id)
     {
         $user = Auth::user();
-        if ($user->attendance_status !== 'Masuk') return response()->json(['message' => 'Gagal mengambil tugas. Status kehadiran Anda saat ini tidak "Masuk" (Cuti/Izin/Sakit).'], 403);
+        if ($user->attendance_status !== 'Masuk') {
+            return response()->json(['message' => 'Gagal mengambil tugas. Status kehadiran Anda saat ini tidak "Masuk" (Cuti/Izin/Sakit).'], 403);
+        }
 
         $ticket = Ticket::with('service')->find($id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
@@ -282,14 +327,27 @@ class TicketController extends Controller
         $serviceName = strtolower($ticket->service->name ?? '');
         $isScheduleBased = str_contains($serviceName, 'zoom') || str_contains($serviceName, 'command');
 
+        // Jika ini Layanan IT, wajib isi estimasi
         if (!$isScheduleBased) {
             $request->validate(['estimated_days' => 'required|integer|min:1']);
+            
+            // SIMPAN ESTIMASI, TAPI TIDAK LANGSUNG ASSIGN
             $ticket->estimated_days = $request->estimated_days;
             $ticket->due_date = now()->addDays($request->estimated_days);
+            $ticket->assigned_staff_id = $user->id;
+            
+            // STATUS DIUBAH KE MENUNGGU PERSETUJUAN OPD
+            $ticket->status = 'pending_opd_approval';
+            $ticket->save();
+            
+            return response()->json([
+                'message' => 'Estimasi berhasil dikirim. Menunggu persetujuan OPD.', 
+                'data' => $ticket->load(['service', 'staff', 'requester'])
+            ]);
         }
 
+        // Jika ini Zoom atau Command Center, langsung assigned
         $ticket->assigned_staff_id = $user->id;
-        $ticket->assigned_at = now();
         $ticket->status = 'assigned';
         $ticket->save();
         
