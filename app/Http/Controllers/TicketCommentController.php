@@ -33,7 +33,8 @@ class TicketCommentController extends Controller
             'file' => 'nullable|file|mimes:jpg,jpeg,png,pdf,docx,xlsx|max:10240',
         ]);
 
-        $ticket = Ticket::find($ticket_id);
+        // ✅ TAMBAHKAN WITH() AGAR INFO LAYANAN & PEMOHON BISA DITAMPILKAN DI NOTIF
+        $ticket = Ticket::with(['service', 'requester'])->find($ticket_id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
 
         if (auth()->user()->role === 'opd' && $ticket->user_id !== auth()->id()) {
@@ -61,18 +62,22 @@ class TicketCommentController extends Controller
                 'file_path' => $filePath,
             ]);
 
-            $nomorTiket = 'Ticket #' . ($ticket->ticket_number ?? $ticket_id);
-            $role = strtoupper($comment->user->role ?? 'User');
-            $lampiranInfo = $filePath ? "\n📎 *Lampiran:* File terunggah" : "";
+            // ✅ FORMAT PESAN LEBIH LENGKAP UNTUK GROUP
+             $nomorTiket = 'Ticket ' . ($ticket->ticket_number ?? $ticket_id);  // ← Hapus #
+ $role = strtoupper($comment->user->role ?? 'User');
+ $namaLayanan = $ticket->service->name ?? 'Tidak diketahui';
+ $namaPemohon = $ticket->requester->name ?? 'Tidak diketahui';
+ $lampiranInfo = $filePath ? "\n📎 Lampiran: File terunggah" : "";  // ← Hapus *
 
-            $text = "📩 *UPDATE CHAT TIKET*\n"
-                  . "━━━━━━━━━━━━━━━━━━━\n"
-                  . "Ticket : *{$nomorTiket}*\n"
-                  . "Dari   : *{$comment->user->name}* ({$role})\n"
-                  . "Pesan  : " . ($comment->message ?? '-')
-                  . "{$lampiranInfo}\n"
-                  . "━━━━━━━━━━━━━━━━━━━";
-
+ $text = "💬 Komentar Baru\n"
+      . "━━━━━━━━━━━━━━━━━━━\n"
+      . "Ticket   : {$nomorTiket}\n"
+      . "Layanan  : {$namaLayanan}\n"
+      . "Pemohon  : {$namaPemohon}\n"
+      . "Dari     : {$comment->user->name} ({$role})\n"
+      . "Pesan    : " . ($comment->message ?? '-')
+      . "{$lampiranInfo}\n"
+      . "━━━━━━━━━━━━━━━━━━━";
             \App\Jobs\SendTelegramJob::dispatch($text);
 
             return response()->json(

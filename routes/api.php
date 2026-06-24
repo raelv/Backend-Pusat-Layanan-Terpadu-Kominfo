@@ -8,6 +8,7 @@ use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Staff\AttendanceController;
 use App\Http\Controllers\Admin\ServiceController;
 use App\Http\Controllers\TicketCommentController;
+use App\Models\TicketReminderLog;
 
 /*
 |--------------------------------------------------------------------------
@@ -110,6 +111,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('tickets', TicketController::class);
     Route::match(['put', 'post'], 'tickets/{ticket}/status', [TicketController::class, 'updateStatus']);
 
+    // ✅ ENDPOINT BARU: JADWAL LAYANAN AKTIF
+    Route::get('/active-schedules', [TicketController::class, 'getActiveSchedules']);
+
     // --- DISKUSI / KOMENTAR ---
     Route::get('tickets/{ticket}/comments', [TicketCommentController::class, 'index']);
     Route::post('tickets/{ticket}/comments', [TicketCommentController::class, 'store']);
@@ -127,6 +131,16 @@ Route::middleware('auth:sanctum')->group(function () {
         
         Route::post('/tickets/{ticket}/claim', [TicketController::class, 'claimTicket']);
         Route::post('/tickets/{ticket}/approve-reject', [TicketController::class, 'approveOrRejectTicket']);
+        
+        // ✅ ENDPOINT BARU: REMINDER DEADLINE STAFF
+        Route::get('/reminders', function () {
+            $staffId = Auth::id();
+            return TicketReminderLog::with(['ticket.service'])
+                ->where('staff_id', $staffId)
+                ->orderBy('sent_at', 'desc')
+                ->take(20)
+                ->get();
+        });
     });
 
     // --- ROUTE KHUSUS ADMIN ---

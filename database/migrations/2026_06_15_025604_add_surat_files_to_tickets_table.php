@@ -9,8 +9,14 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('tickets', function (Blueprint $table) {
-            $table->string('surat_permohonan_path')->nullable()->after('form_data'); // Wajib
-            $table->string('lampiran_tambahan_path')->nullable()->after('surat_permohonan_path'); // Opsional
+            // ✅ TAMBAHKAN PENGECEKAN INI
+            if (!Schema::hasColumn('tickets', 'surat_permohonan_path')) {
+                $table->string('surat_permohonan_path')->nullable()->after('form_data');
+            }
+
+            if (!Schema::hasColumn('tickets', 'lampiran_tambahan_path')) {
+                $table->string('lampiran_tambahan_path')->nullable()->after('surat_permohonan_path');
+            }
         });
     }
 

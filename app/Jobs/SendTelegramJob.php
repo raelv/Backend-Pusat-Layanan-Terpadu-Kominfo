@@ -8,7 +8,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Telegram\Bot\Laravel\Facades\Telegram;
+use Illuminate\Support\Facades\Http;
 
 class SendTelegramJob implements ShouldQueue
 {
@@ -18,37 +18,59 @@ class SendTelegramJob implements ShouldQueue
 
     public function __construct($message)
     {
-        // Pastikan yang masuk adalah string murni
         $this->message = is_string($message) ? $message : json_encode($message);
     }
 
-        public function handle(): void
+    public function handle(): void
     {
+        $botToken = env('TELEGRAM_BOT_TOKEN');
         $chatId = env('TELEGRAM_CHAT_ID');
 
-        if (empty($chatId)) {
-            Log::error("TELEGRAM ERROR: TELEGRAM_CHAT_ID di .env kosong!");
+        if (empty($botToken) || empty($chatId)) {
+            Log::error("TELEGRAM ERROR: BOT_TOKEN atau CHAT_ID kosong!", [
+                'has_token' => !empty($botToken),
+                'has_chat_id' => !empty($chatId),
+            ]);
             return;
         }
 
         try {
-            // TAMBAHKAN parse_mode => 'Markdown' SUPAYA TANDA BINTANG BISA JADI TEBAL
-            Telegram::sendMessage([
+            // ✅ STEP 1: Coba kirim dengan Markdown
+            $response = Http::post("https://api.telegram.org/bot{$botToken}/sendMessage", [
                 'chat_id' => $chatId,
                 'text' => $this->message,
-                'parse_mode' => 'Markdown'
+                'parse_mode' => 'Markdown',
             ]);
-        } catch (\Exception $e) {
-            // FALLBACK: Kalau ada karakter yang bikin error Markdown, kirim ulang polos
-            try {
-                $plainText = strip_tags(str_replace(['*', '_'], '', $this->message));
-                Telegram::sendMessage([
+
+            // ✅ LOG RESPONSE PERTAMA
+            Log::info("TELEGRAM ATTEMPT 1 (Markdown):", [
+                'status' => $response->status(),
+                'success' => $response->successful(),
+                'body' => $response->body(),
+            ]);
+
+            // ✅ STEP 2: Kalau gagal, kirim polos tanpa Markdown
+            if (!$response->successful()) {
+                $plainText = strip_tags($this->message);
+                $plainText = str_replace(['*', '_', '`', '[', ']', '(', ')', '#'], '', $plainText);
+                
+                $response2 = Http::post("https://api.telegram.org/bot{$botToken}/sendMessage", [
                     'chat_id' => $chatId,
                     'text' => $plainText,
                 ]);
-            } catch (\Exception $innerE) {
-                Log::error("Gagal kirim notifikasi Telegram: " . $innerE->getMessage());
+
+                // ✅ LOG RESPONSE KEDUA
+                Log::info("TELEGRAM ATTEMPT 2 (Plain):", [
+                    'status' => $response2->status(),
+                    'success' => $response2->successful(),
+                    'body' => $response2->body(),
+                ]);
             }
+
+        } catch (\Exception $e) {
+            Log::error("TELEGRAM EXCEPTION: " . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
     }
 }

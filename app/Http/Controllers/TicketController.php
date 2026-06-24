@@ -19,7 +19,6 @@ class TicketController extends Controller
         $user = Auth::user();
         $query = Ticket::with(['service', 'staff', 'requester', 'comments.user']);
 
-        // Filter Berdasarkan Role
         if ($user->role === 'admin') {
             // Admin lihat semua
         } elseif ($user->role === 'staff') {
@@ -35,7 +34,6 @@ class TicketController extends Controller
             });
         }
 
-        // Filter Berdasarkan Tipe Layanan
         if ($request->has('service_type')) {
             $type = $request->service_type;
             $query->whereHas('service', function ($q) use ($type) {
@@ -49,17 +47,12 @@ class TicketController extends Controller
             });
         }
 
-        // ==========================================
-        // FITUR BARU: SEARCH DINAMIS (PRD TEMANMU)
-        // ==========================================
         if ($request->has('search') && !empty($request->search)) {
             $searchTerm = $request->search;
             
             if (is_numeric($searchTerm)) {
-                // EXACT MATCH: Jika yang dicari angka, cari persis sama dengan ID Tiket
                 $query->where('ticket_number', (int)$searchTerm);
             } else {
-                // LIKE MATCH: Jika yang dicari huruf, cari di nama OPD, layanan, atau form data
                 $query->where(function($q) use ($searchTerm) {
                     $q->whereHas('requester', function($q2) use ($searchTerm) {
                         $q2->where('name', 'ILIKE', "%{$searchTerm}%");
@@ -73,6 +66,23 @@ class TicketController extends Controller
         }
 
         return $query->get();
+    }
+
+    // ✅ ENDPOINT BARU: JADWAL LAYANAN AKTIF
+    public function getActiveSchedules()
+    {
+        $schedules = Ticket::with(['service', 'staff'])
+            ->whereHas('service', function ($q) {
+                $q->where('name', 'LIKE', '%Zoom%')
+                  ->orWhere('name', 'LIKE', '%Command%');
+            })
+            ->whereIn('status', ['assigned', 'in_progress', 'approved_admin'])
+            ->whereNotNull('schedule_start')
+            ->whereNotNull('schedule_end')
+            ->orderBy('schedule_start', 'asc')
+            ->get();
+
+        return response()->json($schedules);
     }
 
     public function show($id)
@@ -104,12 +114,15 @@ class TicketController extends Controller
     {
         $user = Auth::user();
 
-        // 1. VALIDASI JAM OPERASIONAL UNTUK OPD
-        if ($user->role === 'opd') {
-            // ✅ FIX TIMEZONE WITA
+        // Cek dulu layanannya Zoom/Command atau IT
+        $service = Service::find($request->service_id);
+        $serviceName = strtolower($service->name ?? '');
+        $isScheduleBased = str_contains($serviceName, 'zoom') || str_contains($serviceName, 'command');
+
+        // ✅ HAPUS BLOKIRAN MALAM HARI UNTUK ZOOM/COMMAND CENTER
+        if ($user->role === 'opd' && !$isScheduleBased) {
             $now = \Carbon\Carbon::now('Asia/Makassar');
             $startTime = \Carbon\Carbon::createFromTime(7, 30, 0, 'Asia/Makassar'); 
-            $endTime = \Carbon\Carbon::createFromTime(22, 0, 0, 'Asia/Makassar');   
             $bufferTime = \Carbon\Carbon::createFromTime(21, 55, 0, 'Asia/Makassar');
 
             if ($now->lt($startTime) || $now->gt($bufferTime)) {
@@ -119,19 +132,25 @@ class TicketController extends Controller
             }
         }
 
-        // 2. VALIDASI FORM & FILE (MIME TYPE & UKURAN)
-        $request->validate([
+        $validationRules = [
             'service_id' => 'required|exists:services,id',
             'form_data' => 'required', 
-            'schedule_start' => 'nullable|date',
-            'surat_permohonan' => 'required|file|mimes:pdf,jpg,jpeg,png|max:10240', // WAJIB
-            'lampiran_tambahan' => 'nullable|file|mimes:pdf,jpg,jpeg,png,docx,xlsx,zip|max:10240', // OPSIONAL
-        ]);
+            'surat_permohonan' => 'required|file|mimes:pdf,jpg,jpeg,png|max:10240',
+            'lampiran_tambahan' => 'nullable|file|mimes:pdf,jpg,jpeg,png,docx,xlsx,zip|max:10240',
+        ];
+
+        if ($isScheduleBased) {
+            $validationRules['schedule_start'] = 'required|date';
+            $validationRules['schedule_end'] = 'required|date|after:schedule_start';
+        } else {
+            $validationRules['schedule_start'] = 'nullable|date';
+        }
+
+        $request->validate($validationRules);
         
         $formData = $request->form_data;
         if (is_string($formData)) $formData = json_decode($formData, true);
 
-        // 3. LOGIKA UPLOAD FILE
         $suratPath = null;
         $lampiranPath = null;
 
@@ -143,27 +162,37 @@ class TicketController extends Controller
                 $lampiranPath = $request->file('lampiran_tambahan')->store('lampiran_tambahan', 'public');
             }
         } catch (\Exception $e) {
-            // Hapus file yang mungkin sudah terupload sebelum error
             if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
             return response()->json(['message' => 'Gagal mengupload file surat permohonan.', 'error' => $e->getMessage()], 500);
         }
 
-        // 4. LOGIKA SLA & SIMPAN TIKET
-        $service = Service::find($request->service_id);
         $dueDate = null;
-        $isScheduleBased = str_contains(strtolower($service->name), 'zoom') || str_contains(strtolower($service->name), 'command');
-
         if ($isScheduleBased && $service->sla_days > 0) {
             $dueDate = now()->addDays($service->sla_days);
         }
 
         if ($isScheduleBased && $request->has('schedule_start')) {
-            // ✅ FIX TIMEZONE WITA
-            $scheduleTime = \Carbon\Carbon::parse($request->schedule_start, 'Asia/Makassar');
-            $startTime = \Carbon\Carbon::createFromTime(7, 30, 0, 'Asia/Makassar'); 
-            $endTime = \Carbon\Carbon::createFromTime(22, 0, 0, 'Asia/Makassar');   
-            if ($scheduleTime->lt($startTime) || $scheduleTime->gt($endTime)) {
-                // Hapus file yang sudah ke-upload karena validasi jadwal gagal
+            $nowWita = \Carbon\Carbon::now('Asia/Makassar');
+            $newStart = \Carbon\Carbon::parse($request->schedule_start, 'Asia/Makassar');
+            $newEnd = \Carbon\Carbon::parse($request->schedule_end, 'Asia/Makassar');
+            
+            // CEK JIKA JADWAL SUDAH LEWAT (PAST TIME)
+            if ($newStart->lt($nowWita)) {
+                if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
+                if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
+                
+                return response()->json([
+                    'message' => 'Tidak dapat melakukan pemesanan untuk jadwal yang sudah lewat.'
+                ], 422);
+            }
+            
+            // ✅ FIX: BANDINGKAN FORMAT JAM-NYA SAJA (H:i)
+            $opsStartTimeStr = '07:30';
+            $opsEndTimeStr = '22:00';
+            $newStartStr = $newStart->format('H:i');
+            $newEndStr = $newEnd->format('H:i');
+
+            if ($newStartStr < $opsStartTimeStr || $newEndStr > $opsEndTimeStr) {
                 if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
                 if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
                 
@@ -171,16 +200,19 @@ class TicketController extends Controller
                     'message' => 'Jam pelaksanaan yang dipilih di luar jam operasional (07:30 - 22:00). Silakan pilih jam lain.'
                 ], 422);
             }
+
+            // ✅ HAPUS CEK BENTROK DI SINI (KARENA PENDING TIDAK MENGUNCI JADWAL)
         }
 
         $ticket = Ticket::create([
             'service_id' => $request->service_id,
             'user_id' => $user->id, 
             'form_data' => $formData,
-            'surat_permohonan_path' => $suratPath, // SIMPAN PATH FILE
-            'lampiran_tambahan_path' => $lampiranPath, // SIMPAN PATH FILE
+            'surat_permohonan_path' => $suratPath,
+            'lampiran_tambahan_path' => $lampiranPath,
             'status' => 'pending', 
             'schedule_start' => $request->schedule_start,
+            'schedule_end' => $request->schedule_end ?? null, 
             'due_date' => $dueDate, 
         ]);
         
@@ -196,35 +228,30 @@ class TicketController extends Controller
         $ticket = Ticket::find($id);
 
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
-        
         if ($ticket->user_id !== $user->id) {
             return response()->json(['message' => 'Hanya pemohon yang bisa mengubah permohonan ini.'], 403);
         }
-
-        // ==========================================
-        // VALIDASI BARU: TOLAK EDIT JIKA SUDAH DIBATALKAN
-        // ==========================================
         if ($ticket->status === 'cancelled') {
             return response()->json(['message' => 'Tiket yang sudah dibatalkan tidak dapat diubah.'], 403);
         }
-
-        if (!in_array($ticket->status, ['pending', 'queued'])) {
+        
+        // ✅ IZINKAN EDIT JIKA STATUS needs_reschedule
+        if (!in_array($ticket->status, ['pending', 'queued', 'needs_reschedule'])) {
             return response()->json(['message' => 'Tiket sudah diproses. Perubahan hanya bisa dilakukan melalui ruang diskusi.'], 403);
         }
 
         $request->validate([
             'form_data' => 'required', 
             'schedule_start' => 'nullable|date',
-            'surat_permohonan' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240', // Opsional saat edit
+            'schedule_end' => 'nullable|date|after:schedule_start',
+            'surat_permohonan' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
             'lampiran_tambahan' => 'nullable|file|mimes:pdf,jpg,jpeg,png,docx,xlsx,zip|max:10240',
         ]);
 
         $formData = $request->form_data;
         if (is_string($formData)) $formData = json_decode($formData, true);
 
-        // Handle upload file baru (jika ada)
         if ($request->hasFile('surat_permohonan')) {
-            // Hapus file lama jika ada
             if ($ticket->surat_permohonan_path) {
                 \Illuminate\Support\Facades\Storage::disk('public')->delete($ticket->surat_permohonan_path);
             }
@@ -242,6 +269,15 @@ class TicketController extends Controller
         if ($request->has('schedule_start')) {
             $ticket->schedule_start = $request->schedule_start;
         }
+        if ($request->has('schedule_end')) {
+            $ticket->schedule_end = $request->schedule_end;
+        }
+
+        // ✅ JIKA TIKET PERLU PENJADWALAN ULANG, KEMBALIKAN KE MENUNGGU STAFF
+        if ($ticket->status === 'needs_reschedule' && ($ticket->isDirty('schedule_start') || $ticket->isDirty('schedule_end'))) {
+            $ticket->status = 'pending';
+        }
+
         $ticket->save();
 
         return response()->json(['message' => 'Permohonan berhasil diperbarui', 'data' => $ticket]);
@@ -249,20 +285,15 @@ class TicketController extends Controller
 
     public function updateStatus(Request $request, $detail_id)
     {
-        // ==========================================
-        // FIX: TAMBAHKAN 'approved_by_opd' DI SINI
-        // ==========================================
+        // ✅ TAMBAHKAN needs_reschedule
         $request->validate([
-            'status' => 'required|in:pending,queued,approved_admin,approved_by_opd,pending_opd_approval,assigned,in_progress,completed,rejected,rejected_by_opd,cancelled,expired'
+            'status' => 'required|in:pending,queued,approved_admin,approved_by_opd,pending_opd_approval,assigned,in_progress,completed,rejected,rejected_by_opd,cancelled,expired,overdue_schedule,needs_reschedule'
         ]);
         
         $user = Auth::user();
         $ticket = Ticket::find($detail_id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
         
-        // ==========================================
-        // 1. LOGIKA PERSETUJUAN ESTIMASI OLEH OPD
-        // ==========================================
         if ($request->status === 'approved_by_opd' && $user->role === 'opd') {
             if ($ticket->user_id !== $user->id) return response()->json(['message' => 'Akses ditolak.'], 403);
             if ($ticket->status !== 'pending_opd_approval') {
@@ -273,9 +304,6 @@ class TicketController extends Controller
             return response()->json(['message' => 'Estimasi disetujui OPD. Tiket siap dikerjakan.', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
         }
 
-        // ==========================================
-        // 2. LOGIKA PENOLAKAN ESTIMASI OLEH OPD
-        // ==========================================
         if ($request->status === 'rejected_by_opd' && $user->role === 'opd') {
             if ($ticket->user_id !== $user->id) return response()->json(['message' => 'Akses ditolak.'], 403);
             if ($ticket->status !== 'pending_opd_approval') {
@@ -287,9 +315,6 @@ class TicketController extends Controller
             return response()->json(['message' => 'Estimasi ditolak oleh OPD. Tiket kembali ke antrian.', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
         }
 
-        // ==========================================
-        // 3. LOGIKA PEMBATALAN TIKET OLEH OPD
-        // ==========================================
         if ($request->status === 'cancelled' && $user->role === 'opd') {
             if ($ticket->user_id !== $user->id) return response()->json(['message' => 'Akses ditolak.'], 403);
             if (!in_array($ticket->status, ['pending', 'queued', 'pending_opd_approval'])) {
@@ -300,15 +325,27 @@ class TicketController extends Controller
             return response()->json(['message' => 'Permohonan berhasil dibatalkan oleh OPD', 'data' => $ticket]);
         }
 
-        // ==========================================
-        // 4. LOGIKA UPDATE STATUS OLEH STAFF
-        // ==========================================
         if ($user->role === 'admin') return response()->json(['message' => 'Akses ditolak.'], 403);
         if ($user->role === 'staff' && $ticket->assigned_staff_id !== $user->id) return response()->json(['message' => 'Akses ditolak.'], 403);
         
-        $ticket->status = $request->status;
-        if ($request->status === 'completed') $ticket->completed_at = $ticket->status === 'completed' ? now() : null;
+        if ($request->status === 'completed') {
+            $serviceName = strtolower($ticket->service->name ?? '');
+            $isScheduleBased = str_contains($serviceName, 'zoom') || str_contains($serviceName, 'command');
+            
+            if ($isScheduleBased && $ticket->schedule_start) {
+                $now = \Carbon\Carbon::now('Asia/Makassar');
+                $startTime = \Carbon\Carbon::parse($ticket->schedule_start, 'Asia/Makassar');
+                
+                if ($now->lt($startTime)) {
+                    return response()->json([
+                        'message' => 'Layanan belum dimulai dan belum dapat diselesaikan.'
+                    ], 422);
+                }
+            }
+            $ticket->completed_at = now();
+        }
 
+        $ticket->status = $request->status;
         $ticket->save();
         return response()->json(['message' => 'Status tiket berhasil diperbarui', 'data' => $ticket]);
     }
@@ -327,16 +364,12 @@ class TicketController extends Controller
         $serviceName = strtolower($ticket->service->name ?? '');
         $isScheduleBased = str_contains($serviceName, 'zoom') || str_contains($serviceName, 'command');
 
-        // Jika ini Layanan IT, wajib isi estimasi
         if (!$isScheduleBased) {
             $request->validate(['estimated_days' => 'required|integer|min:1']);
             
-            // SIMPAN ESTIMASI, TAPI TIDAK LANGSUNG ASSIGN
             $ticket->estimated_days = $request->estimated_days;
             $ticket->due_date = now()->addDays($request->estimated_days);
             $ticket->assigned_staff_id = $user->id;
-            
-            // STATUS DIUBAH KE MENUNGGU PERSETUJUAN OPD
             $ticket->status = 'pending_opd_approval';
             $ticket->save();
             
@@ -346,7 +379,6 @@ class TicketController extends Controller
             ]);
         }
 
-        // Jika ini Zoom atau Command Center, langsung assigned
         $ticket->assigned_staff_id = $user->id;
         $ticket->status = 'assigned';
         $ticket->save();
@@ -354,6 +386,7 @@ class TicketController extends Controller
         return response()->json(['message' => 'Tiket berhasil diambil', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
     }
     
+    // ✅ TAMBAHKAN CEK BENTROK SAAT STAFF MENERIMA
     public function approveOrRejectTicket(Request $request, $id)
     {
         $request->validate(['action' => 'required|in:approve,reject']);
@@ -366,6 +399,33 @@ class TicketController extends Controller
         if (!is_null($ticket->assigned_staff_id)) return response()->json(['message' => 'Tiket sudah ditangani oleh staf lain.'], 403);
 
         if ($request->action === 'approve') {
+            // CEK BENTROK SAAT STAFF MENERIMA LAYANAN
+            $newStart = \Carbon\Carbon::parse($ticket->schedule_start, 'Asia/Makassar');
+            $newEnd = \Carbon\Carbon::parse($ticket->schedule_end, 'Asia/Makassar');
+
+            $isConflict = Ticket::where('id', '!=', $ticket->id)
+                ->whereHas('service', function ($q) {
+                    $q->where('name', 'LIKE', '%Zoom%')
+                      ->orWhere('name', 'LIKE', '%Command%');
+                })
+                ->whereIn('status', ['assigned', 'in_progress', 'approved_admin'])
+                ->whereNotNull('schedule_start')
+                ->whereNotNull('schedule_end')
+                ->where(function ($query) use ($newStart, $newEnd) {
+                    $query->where('schedule_start', '<', $newEnd)
+                          ->where('schedule_end', '>', $newStart);
+                })->exists();
+
+            // JIKA BENTROK, STATUS DUBAH JADI needs_reschedule
+            if ($isConflict) {
+                $ticket->status = 'needs_reschedule';
+                $ticket->save();
+                return response()->json([
+                    'message' => 'Gagal menerima layanan. Jadwal yang diminta bentrok dengan layanan yang sudah aktif. Silakan OPD mengubah jadwal.',
+                    'data' => $ticket->load(['service', 'staff', 'requester'])
+                ], 422);
+            }
+
             $ticket->assigned_staff_id = $user->id;
             $ticket->status = 'approved_admin';
             $ticket->save();
@@ -381,7 +441,6 @@ class TicketController extends Controller
     {
         $ticket = Ticket::with(['service', 'staff', 'requester'])->find($id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
-        // TAMBAHKAN "Ticket #" DI SINI
         return Pdf::loadView('pdf.bukti-layanan', compact('ticket'))->setPaper('A4', 'portrait')->stream('Bukti_Layanan_Ticket_'.$ticket->ticket_number.'.pdf');
     }
 
@@ -405,8 +464,6 @@ class TicketController extends Controller
         $phpWord = new PhpWord();
         $section = $phpWord->addSection();
         $section->addText('BUKTI PENERIMAAN LAYANAN', ['bold' => true, 'size' => 16, 'alignment' => 'center']);
-        
-        // TAMBAHKAN "Ticket #" DI SINI
         $section->addText('Nomor: Ticket #' . $ticket->ticket_number, ['size' => 11, 'alignment' => 'center']);
         $section->addTextBreak(1);
         $section->addText('Hari / Tanggal    : ' . \Carbon\Carbon::parse($ticket->created_at)->translatedFormat('l, d F Y'));
