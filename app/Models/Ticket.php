@@ -92,4 +92,9 @@ class Ticket extends Model
     {
         return $this->lampiran_tambahan_path ? \Illuminate\Support\Facades\Storage::url($this->lampiran_tambahan_path) : null;
     }
+
+    public function logs(): HasMany
+    {
+        return $this->hasMany(TicketLog::class)->orderBy('created_at', 'desc');
+    }
 }

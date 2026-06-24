@@ -8,6 +8,7 @@ use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Staff\AttendanceController;
 use App\Http\Controllers\Admin\ServiceController;
 use App\Http\Controllers\TicketCommentController;
+use App\Http\Controllers\Api\TicketLogController; // ✅ TAMBAHKAN INI
 use App\Models\TicketReminderLog;
 
 /*
@@ -72,6 +73,9 @@ Route::middleware('auth:sanctum')->group(function () {
             'message' => $isOperational ? 'Layanan aktif.' : 'Pengajuan layanan sedang ditutup. Jam operasional adalah 07:30 - 22:00 WIB.'
         ]);
     });
+
+    // ✅ ROUTE AUDIT TRAIL (Sudah ada import di atas)
+    Route::get('/tickets/{ticket}/logs', [TicketLogController::class, 'index']);
 
     Route::get('/quick-services', function () {
         // ✅ FIX TIMEZONE WITA
