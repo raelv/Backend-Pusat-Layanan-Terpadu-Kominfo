@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Ticket;
 use App\Models\Service;
 use App\Models\User;
+use App\Models\TicketLog; // ✅ TAMBAHKAN UNTUK AUDIT TRAIL
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -171,7 +172,7 @@ class TicketController extends Controller
             $dueDate = now()->addDays($service->sla_days);
         }
 
-        if ($isScheduleBased && $request->has('schedule_start')) {
+                if ($isScheduleBased && $request->has('schedule_start')) {
             $nowWita = \Carbon\Carbon::now('Asia/Makassar');
             $newStart = \Carbon\Carbon::parse($request->schedule_start, 'Asia/Makassar');
             $newEnd = \Carbon\Carbon::parse($request->schedule_end, 'Asia/Makassar');
@@ -186,7 +187,7 @@ class TicketController extends Controller
                 ], 422);
             }
             
-            // ✅ FIX: BANDINGKAN FORMAT JAM-NYA SAJA (H:i)
+            // CEK JAM OPERASIONAL
             $opsStartTimeStr = '07:30';
             $opsEndTimeStr = '22:00';
             $newStartStr = $newStart->format('H:i');
@@ -201,7 +202,27 @@ class TicketController extends Controller
                 ], 422);
             }
 
-            // ✅ HAPUS CEK BENTROK DI SINI (KARENA PENDING TIDAK MENGUNCI JADWAL)
+            // ✅ CEK BENTROK JADWAL SAAT PENGAJUAN (UPDATE TERBARU)
+            $isConflict = Ticket::whereHas('service', function ($q) {
+                $q->whereIn('category', ['zoom', 'command_center']);
+            })
+            ->whereIn('status', ['assigned', 'in_progress', 'approved_admin'])
+            ->whereNotNull('schedule_start')
+            ->whereNotNull('schedule_end')
+            ->whereDate('schedule_start', $newStart->toDateString())
+            ->where(function ($query) use ($newStart, $newEnd) {
+                $query->where('schedule_start', '<', $newEnd)
+                      ->where('schedule_end', '>', $newStart);
+            })->exists();
+
+            if ($isConflict) {
+                if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
+                if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
+                
+                return response()->json([
+                    'message' => 'Gagal mengajukan. Jadwal yang dipilih beririsan dengan layanan lain yang sudah terdaftar.'
+                ], 422);
+            }
         }
 
         $ticket = Ticket::create([
@@ -218,6 +239,15 @@ class TicketController extends Controller
         
         $ticket->ticket_number = $ticket->id;
         $ticket->save();
+
+        // ✅ AUDIT TRAIL: LOG CREATE
+        TicketLog::create([
+            'ticket_id'   => $ticket->id,
+            'user_id'     => auth()->id(),
+            'action'      => 'CREATED',
+            'description' => 'Tiket layanan baru berhasil dibuat dan masuk ke sistem.',
+            'created_at'  => now(),
+        ]);
         
         return response()->json(['message' => 'Tiket berhasil dibuat', 'data' => $ticket->load(['service', 'requester'])], 201);
     }
@@ -276,6 +306,15 @@ class TicketController extends Controller
         // ✅ JIKA TIKET PERLU PENJADWALAN ULANG, KEMBALIKAN KE MENUNGGU STAFF
         if ($ticket->status === 'needs_reschedule' && ($ticket->isDirty('schedule_start') || $ticket->isDirty('schedule_end'))) {
             $ticket->status = 'pending';
+            
+            // ✅ AUDIT TRAIL: LOG RESCHEDULE
+            TicketLog::create([
+                'ticket_id'   => $ticket->id,
+                'user_id'     => auth()->id(),
+                'action'      => 'RESCHEDULED',
+                'description' => 'OPD mengubah jadwal pelaksanaan dan tiket dikembalikan ke antrian.',
+                'created_at'  => now(),
+            ]);
         }
 
         $ticket->save();
@@ -301,6 +340,16 @@ class TicketController extends Controller
             }
             $ticket->status = 'assigned'; 
             $ticket->save();
+
+            // ✅ AUDIT TRAIL: LOG APPROVED
+            TicketLog::create([
+                'ticket_id'   => $ticket->id,
+                'user_id'     => auth()->id(),
+                'action'      => 'APPROVED',
+                'description' => 'Estimasi waktu SLA disetujui oleh instansi pemohon.',
+                'created_at'  => now(),
+            ]);
+
             return response()->json(['message' => 'Estimasi disetujui OPD. Tiket siap dikerjakan.', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
         }
 
@@ -312,6 +361,16 @@ class TicketController extends Controller
             $ticket->status = 'rejected'; 
             $ticket->assigned_staff_id = null;
             $ticket->save();
+
+            // ✅ AUDIT TRAIL: LOG REJECTED
+            TicketLog::create([
+                'ticket_id'   => $ticket->id,
+                'user_id'     => auth()->id(),
+                'action'      => 'REJECTED',
+                'description' => 'Estimasi waktu SLA ditolak oleh instansi pemohon.',
+                'created_at'  => now(),
+            ]);
+
             return response()->json(['message' => 'Estimasi ditolak oleh OPD. Tiket kembali ke antrian.', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
         }
 
@@ -322,6 +381,16 @@ class TicketController extends Controller
             }
             $ticket->status = 'cancelled';
             $ticket->save();
+
+            // ✅ AUDIT TRAIL: LOG CANCELLED
+            TicketLog::create([
+                'ticket_id'   => $ticket->id,
+                'user_id'     => auth()->id(),
+                'action'      => 'CANCELLED',
+                'description' => 'Tiket dibatalkan oleh pemohon.',
+                'created_at'  => now(),
+            ]);
+
             return response()->json(['message' => 'Permohonan berhasil dibatalkan oleh OPD', 'data' => $ticket]);
         }
 
@@ -347,6 +416,18 @@ class TicketController extends Controller
 
         $ticket->status = $request->status;
         $ticket->save();
+
+        // ✅ AUDIT TRAIL: LOG COMPLETED (JIKA STATUS COMPLETED)
+        if ($request->status === 'completed') {
+            TicketLog::create([
+                'ticket_id'   => $ticket->id,
+                'user_id'     => auth()->id(),
+                'action'      => 'COMPLETED',
+                'description' => 'Staff menyelesaikan tiket layanan.',
+                'created_at'  => now(),
+            ]);
+        }
+
         return response()->json(['message' => 'Status tiket berhasil diperbarui', 'data' => $ticket]);
     }
 
@@ -372,6 +453,15 @@ class TicketController extends Controller
             $ticket->assigned_staff_id = $user->id;
             $ticket->status = 'pending_opd_approval';
             $ticket->save();
+
+            // ✅ AUDIT TRAIL: LOG ESTIMATION SENT (IT)
+            TicketLog::create([
+                'ticket_id'   => $ticket->id,
+                'user_id'     => auth()->id(),
+                'action'      => 'ESTIMATION_SENT',
+                'description' => "Staff memberikan estimasi SLA pengerjaan selama {$request->estimated_days} hari.",
+                'created_at'  => now(),
+            ]);
             
             return response()->json([
                 'message' => 'Estimasi berhasil dikirim. Menunggu persetujuan OPD.', 
@@ -382,6 +472,15 @@ class TicketController extends Controller
         $ticket->assigned_staff_id = $user->id;
         $ticket->status = 'assigned';
         $ticket->save();
+
+        // ✅ AUDIT TRAIL: LOG CLAIMED (ZOOM/CC)
+        TicketLog::create([
+            'ticket_id'   => $ticket->id,
+            'user_id'     => auth()->id(),
+            'action'      => 'CLAIMED',
+            'description' => 'Tiket jadwal berhasil diambil oleh staff.',
+            'created_at'  => now(),
+        ]);
         
         return response()->json(['message' => 'Tiket berhasil diambil', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
     }
@@ -420,6 +519,16 @@ class TicketController extends Controller
             if ($isConflict) {
                 $ticket->status = 'needs_reschedule';
                 $ticket->save();
+
+                // ✅ AUDIT TRAIL: LOG CONFLICT
+                TicketLog::create([
+                    'ticket_id'   => $ticket->id,
+                    'user_id'     => null, // Sistem yang mendeteksi
+                    'action'      => 'SCHEDULE_CONFLICT',
+                    'description' => 'Pengajuan ditolak sistem karena jadwal bentrok dengan layanan lain. Menunggu OPD mengubah jadwal.',
+                    'created_at'  => now(),
+                ]);
+
                 return response()->json([
                     'message' => 'Gagal menerima layanan. Jadwal yang diminta bentrok dengan layanan yang sudah aktif. Silakan OPD mengubah jadwal.',
                     'data' => $ticket->load(['service', 'staff', 'requester'])
@@ -429,10 +538,30 @@ class TicketController extends Controller
             $ticket->assigned_staff_id = $user->id;
             $ticket->status = 'approved_admin';
             $ticket->save();
+
+            // ✅ AUDIT TRAIL: LOG APPROVED BY STAFF
+            TicketLog::create([
+                'ticket_id'   => $ticket->id,
+                'user_id'     => auth()->id(),
+                'action'      => 'SCHEDULE_APPROVED',
+                'description' => 'Staff menerima dan menyetujui jadwal layanan.',
+                'created_at'  => now(),
+            ]);
+
             return response()->json(['message' => 'Layanan berhasil Diterima', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
         } else {
             $ticket->status = 'rejected';
             $ticket->save();
+
+            // ✅ AUDIT TRAIL: LOG REJECTED BY STAFF
+            TicketLog::create([
+                'ticket_id'   => $ticket->id,
+                'user_id'     => auth()->id(),
+                'action'      => 'REJECTED',
+                'description' => 'Layanan ditolak oleh Staff.',
+                'created_at'  => now(),
+            ]);
+
             return response()->json(['message' => 'Layanan Ditolak', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
         }
     }

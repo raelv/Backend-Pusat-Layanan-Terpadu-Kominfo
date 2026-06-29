@@ -13,19 +13,18 @@ class TicketLogController extends Controller
      */
     public function index(Ticket $ticket): JsonResponse
     {
-        $logs = $ticket->logs()->get()->map(function ($log) {
+        $logs = $ticket->logs()->orderBy('created_at', 'asc')->get()->map(function ($log) {
             return [
-                'id'          => $log->id,
-                'time'        => $log->created_at->format('d M Y, H:i'),
-                'actor'       => $log->actor_name,
-                'action'      => $log->action,
-                'description' => $log->description,
+                "id"          => $log->id,
+                "time"        => $log->created_at->format('d M Y, H:i'),
+                "actor"       => $log->actor_name, // Akan otomatis "Nama (Role)" atau "Sistem"
+                "action"      => $log->action,
+                "description" => $log->description,
             ];
         });
 
         return response()->json([
-            'success' => true,
-            'data'    => $logs
+            "data" => $logs
         ]);
     }
 }
