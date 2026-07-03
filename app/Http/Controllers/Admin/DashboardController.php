@@ -43,6 +43,7 @@ class DashboardController extends Controller
                     'name' => $staff->name,
                     'email' => $staff->email,
                     'role' => $staff->role,
+                    'nip' => $staff->nip, // ✅ TAMBAHKAN BARI INI
                     'bidang' => $staff->bidang ?? '-',
                     'attendance_status' => $staff->attendance_status,
                     'active_task_count' => $activeTaskCount,

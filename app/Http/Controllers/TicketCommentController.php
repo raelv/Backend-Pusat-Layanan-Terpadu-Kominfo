@@ -6,6 +6,7 @@ use App\Models\TicketComment;
 use App\Models\Ticket;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use App\Jobs\SendTelegramJob;
 
 class TicketCommentController extends Controller
 {
@@ -33,8 +34,7 @@ class TicketCommentController extends Controller
             'file' => 'nullable|file|mimes:jpg,jpeg,png,pdf,docx,xlsx|max:10240',
         ]);
 
-        // ✅ TAMBAHKAN WITH() AGAR INFO LAYANAN & PEMOHON BISA DITAMPILKAN DI NOTIF
-        $ticket = Ticket::with(['service', 'requester'])->find($ticket_id);
+        $ticket = Ticket::with(['service', 'requester', 'staff'])->find($ticket_id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
 
         if (auth()->user()->role === 'opd' && $ticket->user_id !== auth()->id()) {
@@ -62,23 +62,41 @@ class TicketCommentController extends Controller
                 'file_path' => $filePath,
             ]);
 
-            // ✅ FORMAT PESAN LEBIH LENGKAP UNTUK GROUP
-             $nomorTiket = 'Ticket ' . ($ticket->ticket_number ?? $ticket_id);  // ← Hapus #
- $role = strtoupper($comment->user->role ?? 'User');
- $namaLayanan = $ticket->service->name ?? 'Tidak diketahui';
- $namaPemohon = $ticket->requester->name ?? 'Tidak diketahui';
- $lampiranInfo = $filePath ? "\n📎 Lampiran: File terunggah" : "";  // ← Hapus *
+            // ✅ FORMAT PESAN
+            $nomorTiket = 'Ticket ' . ($ticket->ticket_number ?? $ticket_id);
+            $role = strtoupper($comment->user->role ?? 'User');
+            $namaLayanan = $ticket->service->name ?? 'Tidak diketahui';
+            $namaPemohon = $ticket->requester->name ?? 'Tidak diketahui';
+            $lampiranInfo = $filePath ? "\nLampiran: File terunggah" : "";
+            
+            $pesanUser = $comment->message ?? '-';
+            if (strlen($pesanUser) > 100) {
+                $pesanUser = substr($pesanUser, 0, 100) . '...';
+            }
 
- $text = "💬 Komentar Baru\n"
-      . "━━━━━━━━━━━━━━━━━━━\n"
-      . "Ticket   : {$nomorTiket}\n"
-      . "Layanan  : {$namaLayanan}\n"
-      . "Pemohon  : {$namaPemohon}\n"
-      . "Dari     : {$comment->user->name} ({$role})\n"
-      . "Pesan    : " . ($comment->message ?? '-')
-      . "{$lampiranInfo}\n"
-      . "━━━━━━━━━━━━━━━━━━━";
-            \App\Jobs\SendTelegramJob::dispatch($text);
+            $text = "Komentar Baru\n"
+                  . "━━━━━━━━━━━━━━━━━━━\n"
+                  . "Ticket   : {$nomorTiket}\n"
+                  . "Layanan  : {$namaLayanan}\n"
+                  . "Pemohon  : {$namaPemohon}\n"
+                  . "Dari     : {$comment->user->name} ({$role})\n"
+                  . "Pesan    : {$pesanUser}"
+                  . "{$lampiranInfo}\n"
+                  . "━━━━━━━━━━━━━━━━━━━";
+            
+            // ✅ 1. SELALU KIRIM KE GROUP STAFF UNTUK MONITORING UMUM
+            SendTelegramJob::dispatch($text);
+
+            // ✅ 2. KIRIM DM KE LAWAN BICARA (PRIVATE CHAT)
+            $actorRole = $comment->user->role;
+            
+            if ($actorRole === 'opd' && $ticket->staff && $ticket->staff->telegram_chat_id) {
+                // Jika yang komen OPD, kirim DM ke Staff yang handle tiket
+                SendTelegramJob::dispatch($text, $ticket->staff->telegram_chat_id);
+            } elseif ($actorRole === 'staff' && $ticket->requester && $ticket->requester->telegram_chat_id) {
+                // Jika yang komen Staff, kirim DM ke OPD pemohon tiket
+                SendTelegramJob::dispatch($text, $ticket->requester->telegram_chat_id);
+            }
 
             return response()->json(
                 $comment->load('user:id,name,role'),

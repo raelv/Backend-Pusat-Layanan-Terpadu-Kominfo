@@ -13,11 +13,20 @@ class TicketLogController extends Controller
      */
     public function index(Ticket $ticket): JsonResponse
     {
+        $user = auth()->user();
+        
+        // ✅ FIX SECURITY: Hanya Admin, Staff terkait, atau Pemohon yang boleh akses
+        if ($user->role !== 'admin' && 
+            $ticket->user_id !== $user->id && 
+            $ticket->assigned_staff_id !== $user->id) {
+            return response()->json(['message' => 'Akses ditolak. Anda tidak berhak melihat riwayat tiket ini.'], 403);
+        }
+
         $logs = $ticket->logs()->orderBy('created_at', 'asc')->get()->map(function ($log) {
             return [
                 "id"          => $log->id,
                 "time"        => $log->created_at->format('d M Y, H:i'),
-                "actor"       => $log->actor_name, // Akan otomatis "Nama (Role)" atau "Sistem"
+                "actor"       => $log->actor_name,
                 "action"      => $log->action,
                 "description" => $log->description,
             ];

@@ -10,6 +10,7 @@ use App\Http\Controllers\Admin\ServiceController;
 use App\Http\Controllers\TicketCommentController;
 use App\Http\Controllers\Api\TicketLogController; // ✅ TAMBAHKAN INI
 use App\Models\TicketReminderLog;
+use App\Http\Controllers\Api\TelegramWebhookController;
 
 /*
 |--------------------------------------------------------------------------
@@ -56,8 +57,16 @@ Route::post('/login', function (Request $request) {
 // PUBLIC ROUTE UNTUK PREVIEW PDF
 Route::get('tickets/{ticket}/preview-pdf', [TicketController::class, 'previewPdf']);
 
+Route::post('/telegram/webhook', [TelegramWebhookController::class, 'handleWebhook']);
+
 // PROTECTED ROUTES (Butuh Token)
 Route::middleware('auth:sanctum')->group(function () {
+
+    Route::post('/logout', function (Request $request) {
+    // Hapus token yang sedang dipakai saat ini
+    $request->user()->currentAccessToken()->delete();
+    return response()->json(['message' => 'Logout berhasil']);
+});
     
     // --- CEK JAM OPERASIONAL & AKSES CEPAT LAYANAN ---
     Route::get('/operational-status', function () {
@@ -96,6 +105,20 @@ Route::middleware('auth:sanctum')->group(function () {
             'services' => $services
         ]);
     });
+
+    Route::prefix('user')->group(function () {
+    Route::post('/generate-telegram-token', [TelegramWebhookController::class, 'generateToken']);
+    Route::post('/unlink-telegram', [TelegramWebhookController::class, 'unlinkTelegram']);
+    
+    // Endpoint buat FE cek status koneksi (taruh di sini juga)
+    Route::get('/telegram-status', function () {
+        $user = auth()->user();
+        return response()->json([
+            'is_connected' => !is_null($user->telegram_chat_id),
+            // Kita tidak bisa ambil username langsung, jadi biarkan FE handle UI-nya
+        ]);
+    });
+});
 
     // --- DAFTAR AKUN (UNTUK DROPDOWN) ---
     Route::get('/users', function (Request $request) {
