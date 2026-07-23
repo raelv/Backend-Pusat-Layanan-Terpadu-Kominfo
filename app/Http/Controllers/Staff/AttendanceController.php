@@ -29,6 +29,12 @@ class AttendanceController extends Controller
             'status'     => 'pending',
         ]);
 
+        // ✅ TAMBAHKAN INI: Kirim notif ke Grup Admin/Pimpinan
+        $staffName = Auth::user()->name;
+        \App\Jobs\SendTelegramJob::dispatch(
+            "📝 *PENGAJUAN {$leave->type} BARU*\n━━━━━━━━━━━━━━━━━━━\nStaff: *{$staffName}*\nTanggal: {$leave->start_date->format('d M Y')} s/d {$leave->end_date->format('d M Y')}\nAlasan: {$leave->reason}\n━━━━━━━━━━━━━━━━━━━\n_Mohon cek dashboard untuk melakukan persetujuan._"
+        );
+
         return response()->json([
             'message' => 'Pengajuan izin berhasil dikirim',
             'data'    => $leave

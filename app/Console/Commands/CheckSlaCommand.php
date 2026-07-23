@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Log;
 class CheckSlaCommand extends Command
 {
     protected $signature = 'tickets:check-sla';
-    protected $description = 'Cek SLA terlambat, kirim reminder, dan auto-expired tiket Zoom/Command Center';
+    protected $description = 'Cek SLA terlambat, kirim reminder sekali, dan auto-expired tiket Zoom/Command Center';
 
     public function handle()
     {
@@ -29,15 +29,25 @@ class CheckSlaCommand extends Command
             ->get();
 
         foreach ($expiredTickets as $ticket) {
-            $ticket->update(['status' => 'expired']);
+            // ✅ AUTO-RELEASE: Lepaskan kunci link Zoom jika expired
+            if ($ticket->zoom_link_id) {
+                \App\Models\ZoomLink::where('id', $ticket->zoom_link_id)->update([
+                    'status' => 'available', 
+                    'used_by_ticket_id' => null
+                ]);
+            }
+
+            $ticket->update(['status' => 'expired', 'zoom_link_id' => null]);
             $nomorTiket = 'Ticket #' . $ticket->ticket_number;
             $this->warn("{$nomorTiket} EXPIRED (Jadwal sudah lewat).");
         }
 
         // 2. REMINDER TERLAMBAT (Kirim peringatan kalau melewati due_date tapi belum selesai)
+        // ✅ FIX SPAM: Tambahkan where('is_sla_notified', false)
         $overdueTickets = Ticket::whereNotNull('due_date')
             ->where('due_date', '<', Carbon::now())
             ->whereNotIn('status', ['completed', 'rejected', 'cancelled', 'expired'])
+            ->where('is_sla_notified', false) // ✅ Hanya ambil yang BELUM pernah dikirim notif
             ->get();
 
         foreach ($overdueTickets as $ticket) {
@@ -50,7 +60,14 @@ class CheckSlaCommand extends Command
                   . "Batas  : " . $ticket->due_date->format('d M Y') . "\n"
                   . "━━━━━━━━━━━━━━━━━━━";
             
-            \App\Jobs\SendTelegramJob::dispatch($text);
+            // ✅ FIX: Kirim ke Pimpinan, BUKAN Grup Staff
+            \App\Models\User::where('role', 'pimpinan')->whereNotNull('telegram_chat_id')->each(function($pimpinan) use ($text) {
+                \App\Jobs\SendTelegramJob::dispatch($text, $pimpinan->telegram_chat_id);
+            });
+            
+            // ✅ FIX SPAM: Langsung tandai jadi TRUE setelah dikirim
+            $ticket->update(['is_sla_notified' => true]);
+            
             $this->warn("Reminder terkirim untuk {$nomorTiket}");
         }
 

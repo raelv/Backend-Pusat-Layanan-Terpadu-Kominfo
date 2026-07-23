@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Admin;
+namespace App\Http\Controllers\Pimpinan;
 
 use App\Http\Controllers\Controller;
 use App\Models\Ticket;
@@ -56,11 +56,10 @@ class DashboardController extends Controller
         }
     }
 
-    public function monitorStaff()
+    public function getLeaves()
     {
-        return $this->index();
+        return \App\Models\Leave::with('user:id,name,role,attendance_status')->get();
     }
-
     public function getPendingDispositions()
     {
         $now = \Carbon\Carbon::now('Asia/Makassar');
@@ -137,82 +136,7 @@ class DashboardController extends Controller
 
         return response()->json($formatted);
     }
-    
-    // ✅ FITUR BARU: ADMIN JUGA BISA DISPOSE
-    public function assignStaff(Request $request, $ticket_id)
-    {
-        $request->validate(['staff_id' => 'required|exists:users,id']);
 
-        $ticket = Ticket::find($ticket_id);
-        $staff = User::find($request->staff_id);
-
-        if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
-        
-        // ✅ PROTEKSI 1: Cek attendance_status di tabel users (case-insensitive)
-        $status = strtolower(trim($staff->attendance_status ?? ''));
-        if (in_array($status, ['cuti', 'sakit', 'izin', 'berhalangan hadir'])) {
-            return response()->json([
-                'message' => 'Gagal. Staff sedang berhalangan hadir sehingga tidak dapat menerima tugas.'
-            ], 422);
-        }
-
-        // ✅ PROTEKSI 2: Cek langsung ke tabel leaves (Double Protection)
-        $hasActiveLeave = \App\Models\Leave::where('user_id', $staff->id)
-            ->whereIn('status', ['pending', 'active'])
-            ->whereDate('start_date', '<=', now()->toDateString())
-            ->whereDate('end_date', '>=', now()->toDateString())
-            ->exists();
-
-        if ($hasActiveLeave) {
-            return response()->json([
-                'message' => 'Gagal. Staff memiliki pengajuan izin/cuti/sakit yang sedang berlaku hari ini.'
-            ], 422);
-        }
-
-        $ticket->assigned_staff_id = $staff->id;
-        $ticket->status = 'assigned';
-        $ticket->save();
-
-        // ✅ CATAT LOG AUDIT JIKA INI DISPOSISI TERLAMBAT (ZOOM / COMMAND CENTER)
-        if (in_array(strtolower($ticket->service->category ?? ''), ['zoom', 'command_center']) && $ticket->schedule_start) {
-            if (now()->gt($ticket->schedule_start)) {
-                $telatMenit = now()->diffInMinutes($ticket->schedule_start);
-                \App\Models\TicketLog::create([
-                    'ticket_id' => $ticket->id, 
-                    'user_id' => auth()->id(),
-                    'action' => 'LATE_DISPOSED', 
-                    'description' => "Disposisi dilakukan terlambat {$telatMenit} menit dari jadwal mulai.", 
-                    'created_at' => now(),
-                ]);
-            }
-        }
-
-        $roleLabel = 'Admin';
-        $disposerName = auth()->user()->name;
-
-        \App\Models\TicketLog::create([
-            'ticket_id' => $ticket->id, 
-            'user_id' => auth()->id(),
-            'action' => 'DISPOSED', 
-            'description' => "Disposisi telah dilakukan oleh {$roleLabel} ({$disposerName}).", 
-            'created_at' => now(),
-        ]);
-
-        // ✅ Kirim ke Grup Staff (Otomatis ke TELEGRAM_CHAT_ID di .env)
-        \App\Jobs\SendTelegramJob::dispatch(
-            "📋 *DISPOSISI TIKET BARU*\n━━━━━━━━━━━━━━━━━━━\nTicket: #{$ticket->ticket_number}\nLayanan: {$ticket->service->name}\nDitunjuk oleh: *{$disposerName} ({$roleLabel})*\nDitugaskan ke: *{$staff->name}*\n━━━━━━━━━━━━━━━━━━━\n_Silakan cek aplikasi untuk memproses._"
-        );
-
-        return response()->json([
-            'message' => "Berhasil menunjuk {$staff->name}.",
-            'data' => $ticket->load(['service', 'staff', 'requester', 'zoomLink'])
-        ]);
-    }
-
-    /**
-     * GET /admin/dispositions/staff/{service_id}
-     * Admin melihat list staf yang bisa ditunjuk untuk layanan tertentu
-     */
     public function getAvailableStaffByService($service_id)
     {
         $service = \App\Models\Service::find($service_id);
@@ -264,60 +188,76 @@ class DashboardController extends Controller
         return response()->json($formatted);
     }
 
-    // 1. Approve Pengajuan Izin/Cuti/Sakit
-public function approveLeave($leave_id)
-{
-    $leave = \App\Models\Leave::find($leave_id);
-    if (!$leave) return response()->json(['message' => 'Pengajuan tidak ditemukan'], 404);
+    // ✅ UPDATE: Log & Notif Dinamis
+    public function assignStaff(Request $request, $ticket_id)
+    {
+        $request->validate(['staff_id' => 'required|exists:users,id']);
 
-    if ($leave->status !== 'pending') {
-        return response()->json(['message' => 'Pengajuan ini sudah diproses sebelumnya.'], 403);
+        $ticket = Ticket::find($ticket_id);
+        $staff = User::find($request->staff_id);
+
+        if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
+        
+        // ✅ PROTEKSI 1: Cek attendance_status di tabel users (case-insensitive)
+        $status = strtolower(trim($staff->attendance_status ?? ''));
+        if (in_array($status, ['cuti', 'sakit', 'izin', 'berhalangan hadir'])) {
+            return response()->json([
+                'message' => 'Gagal. Staff sedang berhalangan hadir sehingga tidak dapat menerima tugas.'
+            ], 422);
+        }
+
+        // ✅ PROTEKSI 2: Cek langsung ke tabel leaves (Double Protection)
+        $hasActiveLeave = \App\Models\Leave::where('user_id', $staff->id)
+            ->whereIn('status', ['pending', 'active'])
+            ->whereDate('start_date', '<=', now()->toDateString())
+            ->whereDate('end_date', '>=', now()->toDateString())
+            ->exists();
+
+        if ($hasActiveLeave) {
+            return response()->json([
+                'message' => 'Gagal. Staff memiliki pengajuan izin/cuti/sakit yang sedang berlaku hari ini.'
+            ], 422);
+        }
+
+        $ticket->assigned_staff_id = $staff->id;
+        $ticket->status = 'assigned';
+        $ticket->save();
+
+        // ✅ CATAT LOG AUDIT JIKA INI DISPOSISI TERLAMBAT (ZOOM / COMMAND CENTER)
+        if (in_array(strtolower($ticket->service->category ?? ''), ['zoom', 'command_center']) && $ticket->schedule_start) {
+            if (now()->gt($ticket->schedule_start)) {
+                $telatMenit = now()->diffInMinutes($ticket->schedule_start);
+                \App\Models\TicketLog::create([
+                    'ticket_id' => $ticket->id, 
+                    'user_id' => auth()->id(),
+                    'action' => 'LATE_DISPOSED', 
+                    'description' => "Disposisi dilakukan terlambat {$telatMenit} menit dari jadwal mulai.", 
+                    'created_at' => now(),
+                ]);
+            }
+        }
+
+        $roleLabel = 'Pimpinan';
+        $disposerName = auth()->user()->name;
+
+        \App\Models\TicketLog::create([
+            'ticket_id' => $ticket->id, 
+            'user_id' => auth()->id(),
+            'action' => 'DISPOSED', 
+            'description' => "Disposisi telah dilakukan oleh {$roleLabel} ({$disposerName}).", 
+            'created_at' => now(),
+        ]);
+
+        // ✅ Kirim ke Grup Staff (Otomatis ke TELEGRAM_CHAT_ID di .env)
+        \App\Jobs\SendTelegramJob::dispatch(
+            "📋 *DISPOSISI TIKET BARU*\n━━━━━━━━━━━━━━━━━━━\nTicket: #{$ticket->ticket_number}\nLayanan: {$ticket->service->name}\nDitunjuk oleh: *{$disposerName} ({$roleLabel})*\nDitugaskan ke: *{$staff->name}*\n━━━━━━━━━━━━━━━━━━━\n_Silakan cek aplikasi untuk memproses._"
+        );
+
+        return response()->json([
+            'message' => "Berhasil menunjuk {$staff->name}.",
+            'data' => $ticket->load(['service', 'staff', 'requester', 'zoomLink'])
+        ]);
     }
-
-    // Ubah status leave jadi aktif
-    $leave->status = 'active';
-    $leave->save();
-
-    // ✅ SINIKRONKAN: Ubah attendance_status user
-    $leave->user()->update([
-        'attendance_status' => $leave->type // Otomatis jadi "Cuti", "Sakit", atau "Izin"
-    ]);
-
-    return response()->json([
-        'message' => "Pengajuan {$leave->type} untuk {$leave->user->name} berhasil disetujui.",
-        'data' => $leave
-    ]);
-}
-
-// 2. Reject / Tolak Pengajuan
-public function rejectLeave($leave_id)
-{
-    $leave = \App\Models\Leave::find($leave_id);
-    if (!$leave) return response()->json(['message' => 'Pengajuan tidak ditemukan'], 404);
-
-    if ($leave->status !== 'pending') {
-        return response()->json(['message' => 'Pengajuan ini sudah diproses sebelumnya.'], 403);
-    }
-
-    $leave->status = 'cancelled';
-    $leave->save();
-
-    // Cek apakah user punya cuti/izin aktif lainnya
-    $hasOtherActiveLeave = \App\Models\Leave::where('user_id', $leave->user_id)
-        ->where('id', '!=', $leave->id)
-        ->where('status', 'active')
-        ->whereDate('end_date', '>=', now()->toDateString())
-        ->exists();
-
-    // Kalau tidak ada cuti aktif lain, kembalikan status ke Masuk
-    if (!$hasOtherActiveLeave) {
-        $leave->user()->update(['attendance_status' => 'Masuk']);
-    }
-
-    return response()->json([
-        'message' => "Pengajuan {$leave->type} untuk {$leave->user->name} berhasil ditolak."
-    ]);
-}
 
     public function rejectTicket(Request $request, $ticket_id)
     {
@@ -333,7 +273,7 @@ public function rejectLeave($leave_id)
             return response()->json(['message' => 'Alasan penolakan wajib diisi.'], 422);
         }
 
-        // ✅ FIX: Lepaskan kunci Zoom Link jika tiket ditolak admin
+        // ✅ FIX: Lepaskan kunci Zoom Link jika tiket ditolak pimpinan
         if ($ticket->zoom_link_id) {
             \App\Models\ZoomLink::where('id', $ticket->zoom_link_id)->update([
                 'status' => 'available', 
@@ -350,7 +290,7 @@ public function rejectLeave($leave_id)
             'ticket_id' => $ticket->id, 
             'user_id' => auth()->id(),
             'action' => 'REJECTED_BY_LEADER', 
-            'description' => "Admin menolak layanan. Alasan: {$request->reason}", 
+            'description' => "Pimpinan menolak layanan. Alasan: {$request->reason}", 
             'created_at' => now(),
         ]);
 

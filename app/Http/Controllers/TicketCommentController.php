@@ -84,17 +84,17 @@ class TicketCommentController extends Controller
                   . "{$lampiranInfo}\n"
                   . "━━━━━━━━━━━━━━━━━━━";
             
-            // ✅ 1. SELALU KIRIM KE GROUP STAFF UNTUK MONITORING UMUM
-            SendTelegramJob::dispatch($text);
+            $actorRole = auth()->user()->role;
+            
+            // ✅ 1. KIRIM KE GROUP HANYA JIKA YANG CHAT OPD
+            if ($actorRole === 'opd') {
+                SendTelegramJob::dispatch($text);
+            }
 
             // ✅ 2. KIRIM DM KE LAWAN BICARA (PRIVATE CHAT)
-            $actorRole = $comment->user->role;
-            
             if ($actorRole === 'opd' && $ticket->staff && $ticket->staff->telegram_chat_id) {
-                // Jika yang komen OPD, kirim DM ke Staff yang handle tiket
                 SendTelegramJob::dispatch($text, $ticket->staff->telegram_chat_id);
             } elseif ($actorRole === 'staff' && $ticket->requester && $ticket->requester->telegram_chat_id) {
-                // Jika yang komen Staff, kirim DM ke OPD pemohon tiket
                 SendTelegramJob::dispatch($text, $ticket->requester->telegram_chat_id);
             }
 

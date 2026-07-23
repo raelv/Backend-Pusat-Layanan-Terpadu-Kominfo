@@ -12,14 +12,14 @@ class Ticket extends Model
     use HasFactory;
 
     protected $fillable = [
-        'ticket_number',
+        'ticket_number', 
         'user_id', 'service_id', 'assigned_staff_id', 
         'form_data', 'surat_permohonan_path', 'lampiran_tambahan_path', 
         'schedule_start', 'schedule_end', 
         'due_date', 'assigned_at', 'estimated_days', 'completed_at', 
-        'status', 'is_skm_filled'
+        'status', 'is_skm_filled', 'rejection_reason',
+        'zoom_link_id', 'disposed_at', 'overdue_notified_at', 'is_sla_notified'
     ];
-
     protected $casts = [
         'form_data' => 'array',
         'schedule_start' => 'datetime',
@@ -27,6 +27,7 @@ class Ticket extends Model
         'due_date' => 'datetime',
         'assigned_at' => 'datetime',
         'completed_at' => 'datetime',
+        'overdue_notified_at' => 'datetime', // ✅ TAMBAHKAN
     ];
 
     public function service(): BelongsTo
@@ -57,30 +58,7 @@ class Ticket extends Model
         }
         return now()->greaterThan($this->due_date);
     }
-
-    // Teks estimasi untuk Frontend
-    public function getSlaTextAttribute()
-    {
-        if (in_array($this->status, ['completed', 'rejected', 'cancelled', 'expired'])) {
-            return null; 
-        }
-
-        if (!$this->due_date && is_null($this->assigned_at)) {
-            return 'Menunggu Estimasi Staff';
-        }
-
-        if ($this->is_overdue) {
-            return 'Terlambat';
-        }
-
-        if ($this->due_date) {
-            $sisaHari = now()->diffInDays($this->due_date);
-            return $sisaHari . ' Hari Kerja Lagi';
-        }
-
-        return null;
-    }
-
+    
     // Accessor URL Surat Permohonan
     public function getSuratPermohonanUrlAttribute()
     {
@@ -96,5 +74,10 @@ class Ticket extends Model
     public function logs(): HasMany
     {
         return $this->hasMany(TicketLog::class)->orderBy('created_at', 'desc');
+    }
+
+        public function zoomLink(): BelongsTo
+    {
+        return $this->belongsTo(ZoomLink::class, 'zoom_link_id');
     }
 }
