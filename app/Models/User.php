@@ -70,4 +70,13 @@ class User extends Authenticatable
     {
         return in_array(strtolower($category), $this->service_access ?? []);
     }
+
+    // ✅ TAMBAHKAN INI: Accessor untuk membersihkan string "[]" di kolom bidang
+    public function getBidangAttribute($value)
+    {
+        if ($value === '[]' || $value === '' || $value === null) {
+            return null; // Kembalikan null agar Front-End tidak nge-print teks kosong
+        }
+        return $value;
+    }
 }

@@ -17,9 +17,10 @@ class DashboardController extends Controller
             $completedTickets = Ticket::where('status', 'completed')->count();
             $pendingTickets = Ticket::whereIn('status', ['pending_approval', 'pending', 'queued'])->count();
 
+            // ✅ FIX: Diubah ke huruf kecil sesuai isi database
             $rekapTugas = Ticket::select('services.category', DB::raw('count(*) as total'))
                 ->join('services', 'tickets.service_id', '=', 'services.id')
-                ->whereIn('services.category', ['IT', 'Zoom', 'Command Center'])
+                ->whereIn('services.category', ['it', 'zoom', 'command_center'])
                 ->groupBy('services.category')
                 ->pluck('total', 'category')->toArray();
 
@@ -43,10 +44,11 @@ class DashboardController extends Controller
                     'completed' => $completedTickets,
                     'pending' => $pendingTickets,
                 ],
+                // ✅ Key-nya tetap rekap_tugas, tapi isi key di dalamnya now lowercase
                 'rekap_tugas' => [
-                    'it' => $rekapTugas['IT'] ?? 0,
-                    'zoom' => $rekapTugas['Zoom'] ?? 0,
-                    'command_center' => $rekapTugas['Command Center'] ?? 0,
+                    'it' => $rekapTugas['it'] ?? 0,
+                    'zoom' => $rekapTugas['zoom'] ?? 0,
+                    'command_center' => $rekapTugas['command_center'] ?? 0,
                 ],
                 'staff' => $staffData
             ]);
@@ -67,13 +69,15 @@ class DashboardController extends Controller
 
         $tickets = Ticket::with(['service', 'requester'])
             ->whereNull('assigned_staff_id') 
-            // ✅ FILTER BARU: Hanya ambil yang BELUM lewat jam selesai, ATAU tidak punya jam selesai (Layanan IT)
+            ->whereNotIn('status', ['rejected', 'cancelled', 'completed']) 
             ->where(function($query) use ($now) {
                 $query->whereNull('schedule_end')
                       ->orWhere('schedule_end', '>', $now);
             })
             ->orderBy('created_at', 'asc')
             ->get();
+
+        // ... kode bawahnya biarkan apa adanya ...
 
         // ✅ LOGIC OVERDUE UNTUK TABEL AKTIF
         $formatted = $tickets->map(function ($ticket) use ($now) {
@@ -221,6 +225,14 @@ class DashboardController extends Controller
         }
 
         $category = strtolower($service->category); 
+
+        // ✅ TAMBAHKAN BARIS INI UNTUK DEBUGGING SEMENTARA
+        \Log::info('=== DEBUG DISPOSISI STAFF ===', [
+            'id_yang_dikirim_fe' => $service_id,
+            'nama_layanan_yang_ditemukan' => $service->name,
+            'category_asli_dari_db' => $service->category,
+            'category_setelah_lower' => $category,
+        ]);
 
         $allStaff = \App\Models\User::where('role', 'staff')
             ->whereRaw("service_access @> ?", ['["' . $category . '"]'])

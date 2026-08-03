@@ -20,7 +20,8 @@ class TicketController extends Controller
     public function index(Request $request)
     {
         $user = Auth::user();
-        $query = Ticket::with(['service', 'staff', 'requester', 'comments.user']);
+        // ✅ FIX: Ditambahkan zoomLink agar FE bisa baca status link di daftar tiket
+        $query = Ticket::with(['service', 'staff', 'requester', 'zoomLink', 'comments.user']);
 
         if ($user->role === 'admin') {
             // Admin lihat semua
@@ -90,10 +91,12 @@ class TicketController extends Controller
     {
         $user = Auth::user();
 
+        // ✅ FIX UTAMA: Ditambahkan 'zoomLink' sesuai permintaan FE
         $ticket = Ticket::with([
             'service', 
             'staff', 
             'requester', 
+            'zoomLink', 
             'comments' => function($query) use ($id) {
                 $query->where('ticket_id', $id);
             },
@@ -227,13 +230,27 @@ class TicketController extends Controller
             }
             $dueDate = $newEnd;
         } else {
-            $estimasiHari = isset($formData['estimasi']) ? (int)$formData['estimasi'] : null;
-            if ($estimasiHari !== null && $estimasiHari < 90) {
-                if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
-                if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
-                return response()->json(['message' => 'Pengajuan ditolak. Berdasarkan SOP, pembuatan aplikasi website membutuhkan waktu minimal 3 Bulan (90 Hari).'], 422);
+            $dueDateInput = $request->input('due_date');
+            
+            if ($dueDateInput) {
+                $parsedDueDate = \Carbon\Carbon::parse($dueDateInput, 'Asia/Makassar');
+                $diffInDays = $parsedDueDate->diffInDays(\Carbon\Carbon::now('Asia/Makassar'));
+                
+                if ($diffInDays < 90) {
+                    if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
+                    if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
+                    return response()->json(['message' => 'Pengajuan ditolak. Berdasarkan SOP, pembuatan aplikasi website membutuhkan waktu minimal 3 Bulan (90 Hari).'], 422);
+                }
+                $dueDate = $parsedDueDate;
+            } else {
+                $estimasiHari = isset($formData['estimasi']) ? (int)$formData['estimasi'] : null;
+                if ($estimasiHari !== null && $estimasiHari < 90) {
+                    if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
+                    if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
+                    return response()->json(['message' => 'Pengajuan ditolak. Berdasarkan SOP, pembuatan aplikasi website membutuhkan waktu minimal 3 Bulan (90 Hari).'], 422);
+                }
+                $dueDate = now()->addMonths(3); 
             }
-            $dueDate = now()->addMonths(3);
         }
 
         if ($isScheduleBased && $request->has('schedule_start')) {
@@ -247,7 +264,6 @@ class TicketController extends Controller
                 return response()->json(['message' => 'Tidak dapat melakukan pemesanan untuk jadwal yang sudah lewat.'], 422);
             }
             
-            // ✅ REVISI: Validasi jam & HANYA WEEKDAY untuk Command Center
             if ($category === 'command_center') {
                 if ($newStart->isWeekend()) {
                     if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
@@ -401,7 +417,8 @@ class TicketController extends Controller
         }
 
         $ticket->save();
-        return response()->json(['message' => 'Permohonan berhasil diperbarui', 'data' => $ticket]);
+        // ✅ FIX: Tambahkan zoomLink saat return
+        return response()->json(['message' => 'Permohonan berhasil diperbarui', 'data' => $ticket->load('zoomLink')]);
     }
 
     public function updateStatus(Request $request, $detail_id)
@@ -434,7 +451,7 @@ class TicketController extends Controller
                 'ticket_id' => $ticket->id, 'user_id' => auth()->id(),
                 'action' => 'CANCELLED', 'description' => 'Tiket dibatalkan oleh pemohon.', 'created_at' => now(),
             ]);
-            return response()->json(['message' => 'Permohonan berhasil dibatalkan', 'data' => $ticket]);
+            return response()->json(['message' => 'Permohonan berhasil dibatalkan', 'data' => $ticket->load('zoomLink')]);
         }
 
         if ($user->role === 'admin') return response()->json(['message' => 'Akses ditolak.'], 403);
@@ -483,7 +500,8 @@ class TicketController extends Controller
             );
         }
 
-        return response()->json(['message' => 'Status tiket berhasil diperbarui', 'data' => $ticket]);
+        // ✅ FIX: Tambahkan zoomLink saat return
+        return response()->json(['message' => 'Status tiket berhasil diperbarui', 'data' => $ticket->load('zoomLink')]);
     }
 
     public function claimTicket(Request $request, $id)
@@ -526,19 +544,28 @@ class TicketController extends Controller
 
         SendTelegramJob::dispatch($message, $opdChatId);
         
-        return response()->json(['message' => 'Tiket berhasil diambil', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
+        // ✅ FIX: Tambahkan zoomLink saat return
+        return response()->json(['message' => 'Tiket berhasil diambil', 'data' => $ticket->load(['service', 'staff', 'requester', 'zoomLink'])]);
     }
     
     public function approveOrRejectTicket(Request $request, $id)
     {
-        $request->validate(['action' => 'required|in:approve,reject']);
+        $request->validate([
+            'action' => 'required|in:approve,reject',
+            'zoom_link_id' => 'nullable|exists:zoom_links,id', 
+            'rejection_reason' => 'required_if:action,reject|string|max:500' 
+        ]);
+        
         $user = Auth::user();
         $ticket = Ticket::with('service', 'requester')->find($id);
         
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
         
         if (!$ticket->service->is_schedule_based) return response()->json(['message' => 'Aksi ini hanya untuk layanan Zoom atau Command Center.'], 403);
-        if (!is_null($ticket->assigned_staff_id)) return response()->json(['message' => 'Tiket sudah ditangani oleh staf lain.'], 403);
+
+        if (!is_null($ticket->assigned_staff_id) && $ticket->assigned_staff_id !== $user->id) {
+            return response()->json(['message' => 'Akses ditolak. Tiket ini ditunjukan untuk staff lain.'], 403);
+        }
 
         if ($request->action === 'approve') {
             $newStart = \Carbon\Carbon::parse($ticket->schedule_start, 'Asia/Makassar');
@@ -566,8 +593,6 @@ class TicketController extends Controller
                 ]);
 
                 $opdName = $ticket->requester->name ?? 'OPD';
-                
-                // ✅ FIX: Kirim notif bentrok ke Pimpinan, BUKAN Grup Staff
                 $notifBentrok = "⚠️ *JADWAL BENTROK*\n└─ Ticket: #{$ticket->ticket_number}\n└─ Pemohon: {$opdName}\n_Status tiket diubah menjadi Perlu Penjadwalan Ulang._";
                 User::where('role', 'pimpinan')->whereNotNull('telegram_chat_id')->each(function($pimpinan) use ($notifBentrok) {
                     SendTelegramJob::dispatch($notifBentrok, $pimpinan->telegram_chat_id);
@@ -581,42 +606,82 @@ class TicketController extends Controller
 
                 return response()->json([
                     'message' => 'Gagal menerima layanan. Jadwal yang diminta bentrok dengan layanan yang sudah aktif.',
-                    'data' => $ticket->load(['service', 'staff', 'requester'])
+                    'data' => $ticket->load(['service', 'staff', 'requester', 'zoomLink'])
                 ], 422);
             }
 
+            if (strtolower($ticket->service->category) === 'zoom') {
+                if (!$request->zoom_link_id) {
+                    return response()->json(['message' => 'Wajib memilih link zoom untuk layanan ini.'], 422);
+                }
+
+                $zoomLink = \App\Models\ZoomLink::where('id', $request->zoom_link_id)
+                    ->where('status', 'available')
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$zoomLink) {
+                    return response()->json(['message' => 'Link zoom sudah dipakai layanan lain atau tidak ditemukan. Pilih link lain.'], 422);
+                }
+
+                $ticket->zoom_link_id = $zoomLink->id;
+                $zoomLink->update(['status' => 'in_use', 'used_by_ticket_id' => $ticket->id]);
+            }
+
             $ticket->assigned_staff_id = $user->id;
-            $ticket->status = 'approved_admin';
+            $ticket->status = 'in_progress'; 
             $ticket->save();
 
             TicketLog::create([
                 'ticket_id' => $ticket->id, 'user_id' => auth()->id(),
-                'action' => 'SCHEDULE_APPROVED', 'description' => 'Staff menerima dan menyetujui jadwal layanan.', 'created_at' => now(),
+                'action' => 'IN_PROGRESS', 
+                'description' => 'Staff menerima dan memulai pengerjaan layanan.', 
+                'created_at' => now(),
             ]);
 
             $opdChatId = $ticket->requester->telegram_chat_id ?? null;
+            
+            $zoomText = "";
+            if ($ticket->zoom_link_id) {
+                $zoomText = "\nLink Zoom: {$zoomLink->link}\n";
+            }
+
             SendTelegramJob::dispatch(
-                "✅ *Layanan Anda Telah Diterima*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}\nStaff  : *{$user->name}*\nStatus : Sedang Diproses\n━━━━━━━━━━━━━━━━━━━\n", 
+                "✅ *Layanan Anda Telah Diterima*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}\nStaff  : *{$user->name}*\nStatus : Sedang Diproses\n{$zoomText}━━━━━━━━━━━━━━━━━━━\n", 
                 $opdChatId
             );
 
-            return response()->json(['message' => 'Layanan berhasil Diterima', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
+            return response()->json(['message' => 'Layanan diterima dan sedang dikerjakan.', 'data' => $ticket->load(['service', 'staff', 'zoomLink', 'requester'])]);
         } else {
+            if ($ticket->zoom_link_id) {
+                \App\Models\ZoomLink::where('id', $ticket->zoom_link_id)->update([
+                    'status' => 'available', 
+                    'used_by_ticket_id' => null
+                ]);
+                $ticket->zoom_link_id = null;
+            }
+
             $ticket->status = 'rejected';
+            $ticket->rejection_reason = $request->rejection_reason; 
             $ticket->save();
 
             TicketLog::create([
                 'ticket_id' => $ticket->id, 'user_id' => auth()->id(),
-                'action' => 'REJECTED', 'description' => 'Layanan ditolak oleh Staff.', 'created_at' => now(),
+                'action' => 'REJECTED', 
+                'description' => "Layanan ditolak oleh Staff. Alasan: " . ($request->rejection_reason ?? 'Tidak disebutkan'), 
+                'created_at' => now(),
             ]);
 
             $opdChatId = $ticket->requester->telegram_chat_id ?? null;
+            
+            $reasonText = $request->rejection_reason ? "\nAlasan : {$request->rejection_reason}" : "";
             SendTelegramJob::dispatch(
-                "❌ *Layanan Ditolak*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}\nAlasan : Ditolak oleh Staff.\n━━━━━━━━━━━━━━━━━━━\n", 
+                "❌ *Layanan Ditolak*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}{$reasonText}\n━━━━━━━━━━━━━━━━━━━\n", 
                 $opdChatId
             );
 
-            return response()->json(['message' => 'Layanan Ditolak', 'data' => $ticket->load(['service', 'staff', 'requester'])]);
+            // ✅ FIX: Tambahkan zoomLink saat return
+            return response()->json(['message' => 'Layanan Ditolak', 'data' => $ticket->load(['service', 'staff', 'requester', 'zoomLink'])]);
         }
     }
 
@@ -636,33 +701,45 @@ class TicketController extends Controller
         ]);
 
         if ($request->action === 'reject') {
+            if ($ticket->zoom_link_id) {
+                ZoomLink::where('id', $ticket->zoom_link_id)->update([
+                    'status' => 'available', 
+                    'used_by_ticket_id' => null
+                ]);
+                $ticket->zoom_link_id = null;
+            }
+
             $ticket->status = 'rejected';
             $ticket->rejection_reason = $request->rejection_reason;
-            $ticket->assigned_staff_id = null;
+            $ticket->assigned_staff_id = null; 
             $ticket->save();
 
             TicketLog::create([
-                'ticket_id' => $ticket->id, 'user_id' => auth()->id(),
-                'action' => 'REJECTED', 'description' => "Staff menolak. Alasan: {$request->rejection_reason}", 'created_at' => now(),
+                'ticket_id' => $ticket->id, 
+                'user_id' => auth()->id(),
+                'action' => 'REJECTED', 
+                'description' => "Staff menolak. Alasan: {$request->rejection_reason}", 
+                'created_at' => now(),
             ]);
 
             $opdChatId = $ticket->requester->telegram_chat_id ?? null;
-            SendTelegramJob::dispatch(
-                "❌ *Layanan Ditolak*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}\nAlasan : {$request->rejection_reason}\n━━━━━━━━━━━━━━━━━━━\n", 
-                $opdChatId
-            );
+            if ($opdChatId) {
+                SendTelegramJob::dispatch(
+                    "❌ *Layanan Ditolak*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}\nAlasan : {$request->rejection_reason}\n━━━━━━━━━━━━━━━━━━━\n", 
+                    $opdChatId
+                );
+            }
 
-            return response()->json(['message' => 'Layanan berhasil ditolak.', 'data' => $ticket]);
+            // ✅ FIX: Tambahkan zoomLink saat return
+            return response()->json(['message' => 'Layanan berhasil ditolak.', 'data' => $ticket->load('zoomLink')]);
         }
 
         if ($request->action === 'approve') {
-            // CEK KATEGORI ZOOM
             if (strtolower($ticket->service->category) === 'zoom') {
                 if (!$request->zoom_link_id) {
                     return response()->json(['message' => 'Wajib memilih link zoom untuk layanan ini.'], 422);
                 }
 
-                // ✅ FIX RACE CONDITION: Gunakan row locking untuk cegah double booking
                 $zoomLink = ZoomLink::where('id', $request->zoom_link_id)
                     ->where('status', 'available')
                     ->lockForUpdate()
@@ -676,25 +753,19 @@ class TicketController extends Controller
                 $zoomLink->update(['status' => 'in_use', 'used_by_ticket_id' => $ticket->id]);
             }
 
-            // ✅ AUTO-RELEASE: Lepaskan kunci link Zoom jika ditolak
-            if ($ticket->zoom_link_id) {
-                \App\Models\ZoomLink::where('id', $ticket->zoom_link_id)->update([
-                    'status' => 'available', 
-                    'used_by_ticket_id' => null
-                ]);
-                $ticket->zoom_link_id = null;
-            }
-
-            $ticket->status = 'rejected';
+            $ticket->status = 'in_progress'; 
             $ticket->save();
 
             TicketLog::create([
-                'ticket_id' => $ticket->id, 'user_id' => auth()->id(),
-                'action' => 'IN_PROGRESS', 'description' => 'Staff menerima dan memulai pengerjaan.', 'created_at' => now(),
+                'ticket_id' => $ticket->id, 
+                'user_id' => auth()->id(),
+                'action' => 'IN_PROGRESS', 
+                'description' => 'Staff menerima dan memulai pengerjaan.', 
+                'created_at' => now(),
             ]);
 
-            if (!empty($ticket->zoom_link_id)) {
-                $opdChatId = $ticket->requester->telegram_chat_id ?? null;
+            $opdChatId = $ticket->requester->telegram_chat_id ?? null;
+            if ($opdChatId && $ticket->zoom_link_id) {
                 SendTelegramJob::dispatch(
                     "✅ *Layanan Anda Telah Diterima*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}\nLink Zoom: {$zoomLink->link}\n━━━━━━━━━━━━━━━━━━━\n", 
                     $opdChatId

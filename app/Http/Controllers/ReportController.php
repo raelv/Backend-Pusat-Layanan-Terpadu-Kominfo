@@ -4,8 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Ticket;
 use App\Exports\RekapLayananExport;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Maatwebsite\Excel\Facades\Excel;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 
 class ReportController extends Controller
@@ -61,5 +61,100 @@ class ReportController extends Controller
         }
 
         return $query->orderBy('created_at', 'desc')->get();
+    }
+
+    // ✅ Preview Data JSON untuk Front-End
+    public function getCollectiveData(Request $request)
+    {
+        $query = \App\Models\Ticket::with(['service', 'staff', 'requester', 'zoomLink']);
+
+        if ($request->filled('start_date') && $request->filled('end_date')) {
+            $query->whereBetween('created_at', [$request->start_date, $request->end_date . ' 23:59:59']);
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $tickets = $query->orderBy('created_at', 'desc')->get();
+
+        $data = $tickets->map(function ($ticket) {
+            return [
+                'id' => $ticket->id,
+                'ticket_number' => 'Ticket #' . $ticket->ticket_number,
+                'service_name' => $ticket->service->name ?? null,
+                'category' => $ticket->service->category ?? null,
+                'requester_name' => $ticket->requester->name ?? null,
+                'requester_instansi' => $ticket->requester->bidang ?? ($ticket->requester->name ?? null),
+                'created_at' => $ticket->created_at->toDateTimeString(),
+                'schedule_start' => $ticket->schedule_start ? $ticket->schedule_start->toDateTimeString() : null,
+                'schedule_end' => $ticket->schedule_end ? $ticket->schedule_end->toDateTimeString() : null,
+                'status' => $ticket->status,
+                'staff_name' => $ticket->staff->name ?? null,
+                'staff_nip' => $ticket->staff->nip ?? null,
+                'zoom_link' => $ticket->zoomLink ? $ticket->zoomLink->link : null,
+                'rejection_reason' => $ticket->rejection_reason ?? null
+            ];
+        });
+
+        return response()->json([
+            'message' => 'Data laporan berhasil diambil',
+            'data' => $data,
+            'meta' => [
+                'total' => $data->count(),
+                'filtered_by_date' => $request->filled('start_date'),
+                'filtered_by_status' => $request->filled('status')
+            ]
+        ]);
+    }
+
+    // ✅ DOWNLOAD PDF KOLEKTIF
+    public function exportCollectivePdf(Request $request)
+    {
+        $query = \App\Models\Ticket::with(['service', 'staff', 'requester', 'zoomLink']);
+        
+        if ($request->filled('start_date') && $request->filled('end_date')) {
+            $query->whereBetween('created_at', [$request->start_date, $request->end_date . ' 23:59:59']);
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $tickets = $query->orderBy('created_at', 'desc')->get();
+        
+        $data = [
+            'tickets' => $tickets,
+            'printed_at' => now()->translatedFormat('d F Y, H:i'),
+            'start_date' => $request->start_date ? \Carbon\Carbon::parse($request->start_date) : now()->subMonths(3),
+            'end_date' => $request->end_date ? \Carbon\Carbon::parse($request->end_date) : now(),
+            'filter_status' => $request->status ?? 'Semua Status',
+            'filter_service' => 'Semua Layanan'
+        ];
+        
+        return Pdf::loadView('pdf.rekap-layanan', $data)
+            ->setPaper('A4', 'landscape')
+            ->download('Laporan_Seluruh_Layanan_Kominfo.pdf');
+    }
+
+    // ✅ DOWNLOAD EXCEL KOLEKTIF
+    public function exportCollectiveExcel(Request $request)
+    {
+        $query = \App\Models\Ticket::with(['service', 'staff', 'requester', 'zoomLink']);
+        
+        if ($request->filled('start_date') && $request->filled('end_date')) {
+            $query->whereBetween('created_at', [$request->start_date, $request->end_date . ' 23:59:59']);
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $tickets = $query->orderBy('created_at', 'desc')->get();
+        
+        return Excel::download(
+            new RekapLayananExport($tickets), 
+            'Laporan_Seluruh_Kominfo.xlsx'
+        );
     }
 }

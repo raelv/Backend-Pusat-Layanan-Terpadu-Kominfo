@@ -60,13 +60,14 @@ class DashboardController extends Controller
     {
         return \App\Models\Leave::with('user:id,name,role,attendance_status')->get();
     }
+    
     public function getPendingDispositions()
     {
         $now = \Carbon\Carbon::now('Asia/Makassar');
 
         $tickets = Ticket::with(['service', 'requester'])
             ->whereNull('assigned_staff_id') 
-            // ✅ FILTER BARU: Hanya ambil yang BELUM lewat jam selesai, ATAU tidak punya jam selesai (Layanan IT)
+            ->whereNotIn('status', ['rejected', 'cancelled', 'completed']) 
             ->where(function($query) use ($now) {
                 $query->whereNull('schedule_end')
                       ->orWhere('schedule_end', '>', $now);
