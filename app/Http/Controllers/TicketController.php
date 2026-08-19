@@ -119,42 +119,34 @@ class TicketController extends Controller
         $user = Auth::user();
 
         $service = Service::find($request->service_id);
+        if (!$service) {
+            return response()->json(['message' => 'Layanan tidak ditemukan'], 404);
+        }
+
         $isScheduleBased = $service->is_schedule_based;
         $category = strtolower($service->category);
 
-        // ✅ REVISI JAM OPERASIONAL BERDASARKAN KATEGORI
-        if ($user->role === 'opd') {
+        // ✅ CEK HARI & JAM OPERASIONAL PENGAJUAN (Sesuai Dokumen Terbaru)
+        if (!in_array(strtolower($user->role), ['admin', 'staff', 'pimpinan'])) {
             $now = \Carbon\Carbon::now('Asia/Makassar');
             
+            // LANGKAH 1: Validasi Hari (Berlaku untuk SEMUA LAYANAN)
+            if ($now->isWeekend()) {
+                return response()->json(['message' => 'Layanan hanya dapat diajukan pada hari Senin sampai Jumat.'], 422);
+            }
+
+            // LANGKAH 2: Validasi Jam (Khusus Command Center SAJA)
             if ($category === 'command_center') {
-                // COMMAND CENTER: Senin - Jumat, 07:30 - 16:00 WITA
-                if ($now->isWeekend()) {
-                    return response()->json([
-                        'message' => 'Pengajuan layanan Command Center sedang ditutup. Hanya tersedia hari Senin - Jumat, pukul 07:30 - 16:00 WITA.'
-                    ], 403);
-                }
                 $startTime = \Carbon\Carbon::createFromTime(7, 30, 0, 'Asia/Makassar');
                 $endTime = \Carbon\Carbon::createFromTime(16, 0, 0, 'Asia/Makassar');
                 
                 if ($now->lt($startTime) || $now->gt($endTime)) {
-                    return response()->json([
-                        'message' => 'Pengajuan layanan Command Center sedang ditutup. Jam operasional adalah Senin - Jumat, pukul 07:30 - 16:00 WITA.'
-                    ], 403);
-                }
-            } elseif ($category === 'it') {
-                // LAYANAN IT: Setiap hari, 07:30 - 22:00 WITA (TIDAK DIUBAH)
-                $startTime = \Carbon\Carbon::createFromTime(7, 30, 0, 'Asia/Makassar'); 
-                $bufferTime = \Carbon\Carbon::createFromTime(21, 55, 0, 'Asia/Makassar');
-
-                if ($now->lt($startTime) || $now->gt($bufferTime)) {
-                    return response()->json([
-                        'message' => 'Pengajuan layanan sedang ditutup. Jam operasional layanan adalah 07:30 - 22:00 WITA.'
-                    ], 403);
+                    return response()->json(['message' => 'Layanan Command Center hanya dapat diajukan pada jam 07.30 - 16.00 WITA.'], 422);
                 }
             }
-            // ZOOM: Tidak ada batasan jam operasional (Skip pengecekan)
         }
 
+        // ✅ VALIDASI INPUT DASAR (Di luar transaction)
         $validationRules = [
             'service_id' => 'required|exists:services,id',
             'form_data' => 'required', 
@@ -172,161 +164,239 @@ class TicketController extends Controller
         $request->validate($validationRules);
         
         $formData = $request->form_data;
-        if (is_string($formData)) $formData = json_decode($formData, true);
+        
+        // 1. Parse JSON jika berupa string
+        if (is_string($formData)) {
+            $formData = json_decode($formData, true);
+        } 
 
-        // ✅ VALIDASI JUMLAH PESERTA COMMAND CENTER
+        // 2. Fallback array kosong jika parsing gagal
+        if (!is_array($formData)) {
+            $formData = [];
+        }
+
+        // ✅ 3. NORMALISASI KEY (Menyelesaikan bug camelCase vs snake_case dari FE)
+        $mapKeys = [
+            'jumlahPeserta' => 'jumlah_peserta',
+            'namaAcara' => 'nama_acara',
+            'namaAplikasi' => 'nama_aplikasi',
+            'waktuMulai' => 'waktu_mulai',
+            'waktuSelesai' => 'waktu_selesai',
+            'topik' => 'topik',
+            'estimasi' => 'estimasi',
+        ];
+
+        foreach ($mapKeys as $camelKey => $snakeKey) {
+            if (isset($formData[$camelKey]) && !isset($formData[$snakeKey])) {
+                $formData[$snakeKey] = $formData[$camelKey];
+                unset($formData[$camelKey]);
+            }
+        }
+
+        // ✅ VALIDASI NAMA LENGKAP (Tidak boleh mengandung angka)
+if (isset($formData['nama'])) {
+    $nama = trim($formData['nama']);
+    
+    // Hanya boleh huruf, spasi, titik, koma, tanda hubung, dan petik (untuk gelar)
+    if (!preg_match('/^[a-zA-Z\s.\-,\']+$/', $nama)) {
+        return response()->json([
+            'message' => 'Nama Lengkap tidak valid. Hanya boleh berisi huruf, spasi, dan tanda baca gelar (titik, koma, tanda hubung). Angka dan simbol tidak diperbolehkan.'
+        ], 422);
+    }
+    
+    // Cek kalau kosong setelah trim
+    if (empty($nama)) {
+        return response()->json([
+            'message' => 'Nama Lengkap wajib diisi.'
+        ], 422);
+    }
+    
+    $formData['nama'] = $nama;
+}
+        
+        // ✅ VALIDASI FORM DATA
         if (strtolower($service->category) === 'command_center') {
             $jumlahPeserta = isset($formData['jumlah_peserta']) ? (int)$formData['jumlah_peserta'] : null;
             
             if (is_null($jumlahPeserta)) {
-                return response()->json([
-                    'message' => 'Jumlah peserta wajib diisi untuk layanan Command Center.'
-                ], 422);
+                return response()->json(['message' => 'Jumlah peserta wajib diisi untuk layanan Command Center.'], 422);
             }
-
             if ($jumlahPeserta < 3 || $jumlahPeserta > 50) {
-                return response()->json([
-                    'message' => 'Jumlah peserta tidak boleh kurang dari 3 dan tidak boleh melebihi 50 orang (kapasitas maksimal Command Center).'
-                ], 422);
+                return response()->json(['message' => 'Jumlah peserta tidak boleh kurang dari 3 dan tidak boleh melebihi 50 orang (kapasitas maksimal Command Center).'], 422);
             }
         }
 
-        if (isset($formData['wa'])) {
-            $wa = preg_replace('/\s+/', '', $formData['wa']);
-            if (!preg_match('/^(\+62|62|08)[0-9]{8,12}$/', $wa)) {
-                return response()->json([
-                    'message' => 'Nomor WhatsApp tidak valid. Pastikan nomor berupa angka, diawali dengan 08/628, dan terdiri dari 10-14 digit.'
-                ], 422);
-            }
-            $formData['wa'] = $wa;
+        // ✅ GANTI DENGAN INI
+if (isset($formData['wa'])) {
+    $wa = preg_replace('/\s+/', '', $formData['wa']);
+    
+    try {
+        $phone = new \Propaganistas\LaravelPhone\PhoneNumber($wa, 'ID');
+        
+        if (!$phone->isValid()) {
+            return response()->json([
+                'message' => 'Nomor WhatsApp tidak valid. Gunakan nomor Indonesia yang valid (contoh: 08123456789).'
+            ], 422);
         }
+        
+        $formData['wa'] = $phone->formatE164();
+        
+    } catch (\Exception $e) {
+        return response()->json([
+            'message' => 'Format nomor WhatsApp tidak dikenali.'
+        ], 422);
+    }
+}
 
-        $suratPath = null;
-        $lampiranPath = null;
-
-        try {
-            if ($request->hasFile('surat_permohonan')) {
-                $suratPath = $request->file('surat_permohonan')->store('surat_permohonan', 'public');
-            }
-            if ($request->hasFile('lampiran_tambahan')) {
-                $lampiranPath = $request->file('lampiran_tambahan')->store('lampiran_tambahan', 'public');
-            }
-        } catch (\Exception $e) {
-            if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
-            return response()->json(['message' => 'Gagal mengupload file surat permohonan.', 'error' => $e->getMessage()], 500);
-        }
-
-        $dueDate = null;
-
-        if ($isScheduleBased) {
-            $newStart = \Carbon\Carbon::parse($request->schedule_start, 'Asia/Makassar');
-            $newEnd = \Carbon\Carbon::parse($request->schedule_end, 'Asia/Makassar');
+        // ✅ MULAI DATABASE TRANSACTION
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($request, $user, $service, $isScheduleBased, $category, $formData) {
             
-            $durationInHours = $newStart->diffInHours($newEnd);
-            if ($durationInHours > 6) {
+            $suratPath = null;
+            $lampiranPath = null;
+
+            $fail = function ($message, $status = 422) use (&$suratPath, &$lampiranPath) {
                 if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
                 if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
-                return response()->json(['message' => 'Pengajuan ditolak. Berdasarkan SOP, durasi maksimal pemesanan Zoom/Command Center adalah 6 jam.'], 422);
+                throw new \Illuminate\Http\Exceptions\HttpResponseException(
+                    response()->json(['message' => $message], $status)
+                );
+            };
+
+            // 1. Upload File
+            try {
+                // UPLOAD SURAT PERMOHONAN
+                if ($request->hasFile('surat_permohonan')) {
+                    $file = $request->file('surat_permohonan');
+                    
+                    // ✅ KEAMANAN: Validasi isi file (Bukan cuma ekstensi)
+                    $allowedMimes = ['image/jpeg', 'image/png', 'application/pdf'];
+                    $realMime = $file->getMimeType();
+                    
+                    if (!in_array($realMime, $allowedMimes)) {
+                        $fail('File surat permohonan mengandung format yang tidak diizinkan atau file rusak.');
+                    }
+                    
+                    // ✅ KEAMANAN: Cegah Double Extension (misal: shell.php.jpg)
+                    $safeName = str_replace(' ', '_', pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
+                    $safeName = preg_replace('/[^A-Za-z0-9_\-.]/', '', $safeName);
+                    $suratPath = $file->storeAs('surat_permohonan', $safeName . '.' . $file->getClientOriginalExtension(), 'public');
+                }
+
+                // UPLOAD LAMPIRAN
+                if ($request->hasFile('lampiran_tambahan')) {
+                    $file = $request->file('lampiran_tambahan');
+                    
+                    $allowedMimesExtra = ['image/jpeg', 'image/png', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip'];
+                    $realMime = $file->getMimeType();
+                    
+                    if (!in_array($realMime, $allowedMimesExtra)) {
+                        $fail('File lampiran mengandung format yang tidak diizinkan atau file rusak.');
+                    }
+                    
+                    $safeName = str_replace(' ', '_', pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
+                    $safeName = preg_replace('/[^A-Za-z0-9_\-.]/', '', $safeName);
+                    $lampiranPath = $file->storeAs('lampiran_tambahan', $safeName . '.' . $file->getClientOriginalExtension(), 'public');
+                }
+            } catch (\Exception $e) {
+                $fail('Gagal mengupload file surat permohonan.', 500);
             }
-            $dueDate = $newEnd;
-        } else {
-            $dueDateInput = $request->input('due_date');
-            
-            if ($dueDateInput) {
-                $parsedDueDate = \Carbon\Carbon::parse($dueDateInput, 'Asia/Makassar');
-                $diffInDays = $parsedDueDate->diffInDays(\Carbon\Carbon::now('Asia/Makassar'));
+
+            // 2. Hitung & Validasi Due Date
+            $dueDate = null;
+            if ($isScheduleBased) {
+                $newStart = \Carbon\Carbon::parse($request->schedule_start, 'Asia/Makassar');
+                $newEnd = \Carbon\Carbon::parse($request->schedule_end, 'Asia/Makassar');
                 
-                if ($diffInDays < 90) {
-                    if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
-                    if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
-                    return response()->json(['message' => 'Pengajuan ditolak. Berdasarkan SOP, pembuatan aplikasi website membutuhkan waktu minimal 3 Bulan (90 Hari).'], 422);
+                if ($newStart->diffInHours($newEnd) > 6) {
+                    $fail('Pengajuan ditolak. Berdasarkan SOP, durasi maksimal pemesanan Zoom/Command Center adalah 6 jam.');
                 }
-                $dueDate = $parsedDueDate;
+                $dueDate = $newEnd;
             } else {
-                $estimasiHari = isset($formData['estimasi']) ? (int)$formData['estimasi'] : null;
-                if ($estimasiHari !== null && $estimasiHari < 90) {
-                    if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
-                    if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
-                    return response()->json(['message' => 'Pengajuan ditolak. Berdasarkan SOP, pembuatan aplikasi website membutuhkan waktu minimal 3 Bulan (90 Hari).'], 422);
+                // LOGIKA UNTUK LAYANAN IT (NON-SCHEDULE BASED)
+                $dueDateInput = $request->input('due_date');
+                
+                if ($dueDateInput) {
+                    $parsedDueDate = \Carbon\Carbon::parse($dueDateInput, 'Asia/Makassar')->startOfDay();
+                    $minDate = \Carbon\Carbon::now('Asia/Makassar')->startOfDay()->addDays(89); // 90 hari berarti minimal melewati 89 hari dari sekarang
+                    
+                    if ($parsedDueDate->lte($minDate)) {
+                        $fail('Pengajuan ditolak. Berdasarkan SOP, pembuatan aplikasi website membutuhkan waktu minimal 3 Bulan (90 Hari).');
+                    }
+                    $dueDate = $parsedDueDate;
+                } else {
+                    // Kalau tidak ada due_date, pakai default 3 bulan dari sekarang
+                    $dueDate = \Carbon\Carbon::now('Asia/Makassar')->addMonths(3); 
                 }
-                $dueDate = now()->addMonths(3); 
             }
-        }
 
-        if ($isScheduleBased && $request->has('schedule_start')) {
-            $nowWita = \Carbon\Carbon::now('Asia/Makassar');
-            $newStart = \Carbon\Carbon::parse($request->schedule_start, 'Asia/Makassar');
-            $newEnd = \Carbon\Carbon::parse($request->schedule_end, 'Asia/Makassar');
+            // 3. Validasi Jadwal
+            if ($isScheduleBased && $request->has('schedule_start')) {
+                $nowWita = \Carbon\Carbon::now('Asia/Makassar');
+                $newStart = \Carbon\Carbon::parse($request->schedule_start, 'Asia/Makassar');
+                $newEnd = \Carbon\Carbon::parse($request->schedule_end, 'Asia/Makassar');
+                
+                if ($newStart->lt($nowWita)) {
+                    $fail('Tidak dapat melakukan pemesanan untuk jadwal yang sudah lewat.');
+                }
+                
+                if ($category === 'command_center') {
+                    if ($newStart->isWeekend()) {
+                        $fail('Gagal mengajukan. Jadwal Command Center hanya tersedia hari Senin - Jumat.');
+                    }
+                    if ($newStart->format('H:i') < '07:30' || $newEnd->format('H:i') > '16:00') {
+                        $fail('Jam pelaksanaan Command Center yang dipilih di luar jam operasional (07:30 - 16:00 WITA).');
+                    }
+                }
+
+                $isConflict = Ticket::whereHas('service', function ($q) {
+                    $q->whereIn('category', ['zoom', 'command_center']);
+                })
+                ->whereIn('status', ['pending', 'assigned', 'in_progress', 'approved_admin'])
+                ->whereNotNull('schedule_start')
+                ->whereNotNull('schedule_end')
+                ->whereDate('schedule_start', $newStart->toDateString())
+                ->where(function ($query) use ($newStart, $newEnd) {
+                    $query->where('schedule_start', '<', $newEnd)
+                          ->where('schedule_end', '>', $newStart);
+                })->exists();
+
+                if ($isConflict) {
+                    $fail('Gagal mengajukan. Jadwal yang dipilih beririsan dengan layanan lain yang sudah terdaftar.');
+                }
+            }
+
+            // 4. Simpan ke Database
+            $ticket = Ticket::create([
+                'service_id' => $request->service_id,
+                'user_id' => $user->id, 
+                'form_data' => $formData,
+                'surat_permohonan_path' => $suratPath,
+                'lampiran_tambahan_path' => $lampiranPath,
+                'status' => 'pending',
+                'schedule_start' => $request->schedule_start,
+                'schedule_end' => $request->schedule_end ?? null, 
+                'due_date' => $dueDate,
+            ]);
             
-            if ($newStart->lt($nowWita)) {
-                if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
-                if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
-                return response()->json(['message' => 'Tidak dapat melakukan pemesanan untuk jadwal yang sudah lewat.'], 422);
-            }
+            $ticket->ticket_number = $ticket->id;
+            $ticket->save();
+
+            TicketLog::create([
+                'ticket_id' => $ticket->id, 'user_id' => auth()->id(),
+                'action' => 'CREATED', 'description' => 'Tiket layanan baru berhasil dibuat dan menunggu disposisi pimpinan.', 'created_at' => now(),
+            ]);
+
+            // 5. Kirim Notifikasi Telegram
+            $opdName = $user->name ?? 'Instansi OPD';
+            $categoryLabel = $service->category_label;
             
-            if ($category === 'command_center') {
-                if ($newStart->isWeekend()) {
-                    if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
-                    if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
-                    return response()->json(['message' => 'Gagal mengajukan. Jadwal Command Center hanya tersedia hari Senin - Jumat.'], 422);
-                }
-
-                if ($newStart->format('H:i') < '07:30' || $newEnd->format('H:i') > '16:00') {
-                    if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
-                    if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
-                    return response()->json(['message' => 'Jam pelaksanaan Command Center yang dipilih di luar jam operasional (07:30 - 16:00 WITA).'], 422);
-                }
-            }
-
-            $isConflict = Ticket::whereHas('service', function ($q) {
-                $q->whereIn('category', ['zoom', 'command_center']);
-            })
-            ->whereIn('status', ['pending', 'assigned', 'in_progress', 'approved_admin'])
-            ->whereNotNull('schedule_start')
-            ->whereNotNull('schedule_end')
-            ->whereDate('schedule_start', $newStart->toDateString())
-            ->where(function ($query) use ($newStart, $newEnd) {
-                $query->where('schedule_start', '<', $newEnd)
-                      ->where('schedule_end', '>', $newStart);
-            })->exists();
-
-            if ($isConflict) {
-                if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
-                if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
-                return response()->json(['message' => 'Gagal mengajukan. Jadwal yang dipilih beririsan dengan layanan lain yang sudah terdaftar.'], 422);
-            }
-        }
-
-        $ticket = Ticket::create([
-            'service_id' => $request->service_id,
-            'user_id' => $user->id, 
-            'form_data' => $formData,
-            'surat_permohonan_path' => $suratPath,
-            'lampiran_tambahan_path' => $lampiranPath,
-            'status' => 'pending',
-            'schedule_start' => $request->schedule_start,
-            'schedule_end' => $request->schedule_end ?? null, 
-            'due_date' => $dueDate,
-        ]);
-        
-        $ticket->ticket_number = $ticket->id;
-        $ticket->save();
-
-        TicketLog::create([
-            'ticket_id' => $ticket->id, 'user_id' => auth()->id(),
-            'action' => 'CREATED', 'description' => 'Tiket layanan baru berhasil dibuat dan menunggu disposisi pimpinan.', 'created_at' => now(),
-        ]);
-
-        $opdName = $user->name ?? 'Instansi OPD';
-        $categoryLabel = $service->category_label;
-        
-        // ✅ FIX: Kirim khusus ke Telegram Pimpinan, BUKAN Grup Staff
-        $notifMessage = "📢 *LAYANAN BARU TERSEDIA*\n└─ Instansi: *{$opdName}*\n└─ Layanan: {$categoryLabel}\n└─ Ticket: #{$ticket->ticket_number}\n_Silakan Pimpinan untuk melakukan disposisi._";
-        User::where('role', 'pimpinan')->whereNotNull('telegram_chat_id')->each(function($pimpinan) use ($notifMessage) {
-            SendTelegramJob::dispatch($notifMessage, $pimpinan->telegram_chat_id);
+            $notifMessage = "📢 *LAYANAN BARU TERSEDIA*\n└─ Instansi: *{$opdName}*\n└─ Layanan: {$categoryLabel}\n└─ Ticket: #{$ticket->ticket_number}\n_Silakan Pimpinan untuk melakukan disposisi._";
+            User::where('role', 'pimpinan')->whereNotNull('telegram_chat_id')->each(function($pimpinan) use ($notifMessage) {
+                SendTelegramJob::dispatch($notifMessage, $pimpinan->telegram_chat_id);
+            });
+            
+            return response()->json(['message' => 'Tiket berhasil dibuat', 'data' => $ticket->load(['service', 'requester'])], 201);
         });
-        
-        return response()->json(['message' => 'Tiket berhasil dibuat', 'data' => $ticket->load(['service', 'requester'])], 201);
     }
 
     public function update(Request $request, $id)
@@ -353,6 +423,25 @@ class TicketController extends Controller
         $formData = $request->form_data;
         if (is_string($formData)) $formData = json_decode($formData, true);
 
+        // ✅ VALIDASI NAMA LENGKAP
+if (isset($formData['nama'])) {
+    $nama = trim($formData['nama']);
+    
+    if (!preg_match('/^[a-zA-Z\s.\-,\']+$/', $nama)) {
+        return response()->json([
+            'message' => 'Nama Lengkap tidak valid. Hanya boleh berisi huruf, spasi, dan tanda baca gelar (titik, koma, tanda hubung). Angka dan simbol tidak diperbolehkan.'
+        ], 422);
+    }
+    
+    if (empty($nama)) {
+        return response()->json([
+            'message' => 'Nama Lengkap wajib diisi.'
+        ], 422);
+    }
+    
+    $formData['nama'] = $nama;
+}
+
         // ✅ VALIDASI JUMLAH PESERTA COMMAND CENTER
         $currentService = \App\Models\Service::find($ticket->service_id);
         if ($currentService && strtolower($currentService->category) === 'command_center') {
@@ -370,6 +459,28 @@ class TicketController extends Controller
                 ], 422);
             }
         }
+
+        // ✅ TAMBAHKAN INI
+if (isset($formData['wa'])) {
+    $wa = preg_replace('/\s+/', '', $formData['wa']);
+    
+    try {
+        $phone = new \Propaganistas\LaravelPhone\PhoneNumber($wa, 'ID');
+        
+        if (!$phone->isValid()) {
+            return response()->json([
+                'message' => 'Nomor WhatsApp tidak valid. Gunakan nomor Indonesia yang valid.'
+            ], 422);
+        }
+        
+        $formData['wa'] = $phone->formatE164();
+        
+    } catch (\Exception $e) {
+        return response()->json([
+            'message' => 'Format nomor WhatsApp tidak dikenali.'
+        ], 422);
+    }
+}
 
         if ($request->hasFile('surat_permohonan')) {
             if ($ticket->surat_permohonan_path) \Illuminate\Support\Facades\Storage::disk('public')->delete($ticket->surat_permohonan_path);
@@ -643,7 +754,7 @@ class TicketController extends Controller
             
             $zoomText = "";
             if ($ticket->zoom_link_id) {
-                $zoomText = "\nLink Zoom: {$zoomLink->link}\n";
+                $zoomText = "\nLink Zoom: " . ($ticket->zoomLink->link ?? 'Tidak tersedia') . "\n";
             }
 
             SendTelegramJob::dispatch(
@@ -766,8 +877,10 @@ class TicketController extends Controller
 
             $opdChatId = $ticket->requester->telegram_chat_id ?? null;
             if ($opdChatId && $ticket->zoom_link_id) {
+                // Pakai relasi zoomLink yang udah di-load, bukan variabel lokal
+                $zoomText = $ticket->zoomLink ? $ticket->zoomLink->link : 'Tidak tersedia';
                 SendTelegramJob::dispatch(
-                    "✅ *Layanan Anda Telah Diterima*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}\nLink Zoom: {$zoomLink->link}\n━━━━━━━━━━━━━━━━━━━\n", 
+                    "✅ *Layanan Anda Telah Diterima*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}\nLink Zoom: {$zoomText}\n━━━━━━━━━━━━━━━━━━━\n", 
                     $opdChatId
                 );
             }

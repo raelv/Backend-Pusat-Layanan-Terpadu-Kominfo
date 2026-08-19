@@ -80,4 +80,67 @@ class Ticket extends Model
     {
         return $this->belongsTo(ZoomLink::class, 'zoom_link_id');
     }
+
+        // Tambahkan properti ini di atas
+    protected $appends = ['remaining_days'];
+
+    // Tambahkan method ini
+    public function getRemainingDaysAttribute()
+    {
+        // 1. Return null jika sudah selesai, ditolak, atau tidak ada due_date
+        if (in_array($this->status, ['completed', 'rejected', 'cancelled']) || is_null($this->due_date)) {
+            return null;
+        }
+
+        $now = \Carbon\Carbon::now('Asia/Makassar')->startOfDay();
+        $dueDate = $this->due_date->startOfDay();
+
+        // ✅ PENGECEKAN EXCEPTION: Khusus Layanan IT, pakai selisih hari kalender biasa
+        if ($this->service && strtolower($this->service->category) === 'it') {
+            $diff = $now->diffInDays($dueDate, false); // false = mengembalikan angka negatif jika sudah lewat
+            return $diff === 0 ? 0 : $diff; 
+        }
+
+        // --- LOGIKA LAMA UNTUK ZOOM & COMMAND CENTER (Menghitung Hari Kerja) ---
+        
+        // Daftar hari libur nasional (Format m-d)
+        $holidays = [
+            '01-01', '25-03', '29-03', '01-05', '10-05', 
+            '01-06', '07-06', '17-08', '16-09', '20-12', '25-12', '26-12'
+        ];
+
+        // Pastikan start date lebih kecil dari end date untuk perhitungan
+        $startDate = $now->lt($dueDate) ? $now : $dueDate;
+        $endDate = $now->lt($dueDate) ? $dueDate : $now;
+
+        // 2. Hitung total hari kalender
+        $totalDays = $startDate->diffInDays($endDate);
+
+        // 3. Hitung total weekend (Sabtu & Minggu) secara matematis
+        $weeks = floor($totalDays / 7);
+        $remainingDays = $totalDays % 7;
+        
+        $weekendCount = ($weeks * 2); 
+        $currentDay = $startDate->dayOfWeek; 
+        for ($i = 0; $i < $remainingDays; $i++) {
+            if (in_array(($currentDay + $i) % 7, [0, 6])) { 
+                $weekendCount++;
+            }
+        }
+
+        // 4. Hitung total hari libur nasional yang jatuh di hari kerja
+        $holidayCount = 0;
+        $period = \Carbon\CarbonPeriod::create($startDate, $endDate);
+        foreach ($period as $day) {
+            if (!$day->isWeekend() && in_array($day->format('m-d'), $holidays)) {
+                $holidayCount++;
+            }
+        }
+
+        // 5. Hitung sisa hari kerja aktual
+        $workingDays = $totalDays - $weekendCount - $holidayCount;
+
+        // 6. Return negatif jika sudah lewat, positif jika masih tersisa
+        return $now->gt($dueDate) ? (-$workingDays) : $workingDays;
+    }
 }

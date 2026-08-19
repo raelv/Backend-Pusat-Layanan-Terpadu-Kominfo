@@ -33,25 +33,21 @@ class User extends Authenticatable
         'service_access' => 'array',
     ];
 
-    // Relasi: Tiket yang diajukan (sebagai OPD)
     public function tickets(): HasMany 
     { 
         return $this->hasMany(Ticket::class); 
     }
 
-    // Relasi: Tiket yang dikerjakan (sebagai Staf)
     public function assignedTasks(): HasMany 
     { 
         return $this->hasMany(Ticket::class, 'assigned_staff_id'); 
     }
 
-    // Relasi: Multi-Bidang (Many-to-Many)
     public function bidangs(): BelongsToMany
     {
         return $this->belongsToMany(Bidang::class, 'user_bidang', 'user_id', 'bidang_id');
     }
 
-    // Helper: Hitung tugas aktif (Multi-tasking)
     public function getActiveTaskCountAttribute(): int
     {
         return $this->assignedTasks()
@@ -59,23 +55,20 @@ class User extends Authenticatable
             ->count();
     }
 
-    // Helper: Cek Overload (Jika >= 2 tugas)
     public function getIsOverloadedAttribute()
     {
-        return $this->active_task_count >= 2; // Minimal ngurus 2 tugas baru dianggap Overload
+        return $this->active_task_count >= 2; 
     }
 
-    // Helper: Cek hak akses layanan (Checklist)
     public function hasServiceAccess($category)
     {
         return in_array(strtolower($category), $this->service_access ?? []);
     }
 
-    // ✅ TAMBAHKAN INI: Accessor untuk membersihkan string "[]" di kolom bidang
     public function getBidangAttribute($value)
     {
         if ($value === '[]' || $value === '' || $value === null) {
-            return null; // Kembalikan null agar Front-End tidak nge-print teks kosong
+            return null; 
         }
         return $value;
     }

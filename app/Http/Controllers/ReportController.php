@@ -19,6 +19,7 @@ class ReportController extends Controller
             'service_id' => 'nullable|exists:services,id',
         ]);
 
+        // PDF tetap pakai getData() karena butuh Collection untuk load ke Blade
         $tickets = $this->getData($request);
         
         $data = [
@@ -42,11 +43,30 @@ class ReportController extends Controller
             'service_id' => 'nullable|exists:services,id',
         ]);
 
-        $tickets = $this->getData($request);
+        // ✅ UBAH: Excel pakai getQuery() biar hemat RAM
+        $query = $this->getQuery($request);
         
-        return Excel::download(new RekapLayananExport($tickets), 'Laporan_Rekap_Layanan.xlsx');
+        return Excel::download(new RekapLayananExport($query), 'Laporan_Rekap_Layanan.xlsx');
     }
 
+    // ✅ TAMBAHKAN: Query Builder khusus untuk Excel (Tanpa ->get())
+    private function getQuery($request)
+    {
+        $query = Ticket::with(['service', 'staff', 'requester'])
+            ->whereBetween('created_at', [$request->start_date . ' 00:00:00', $request->end_date . ' 23:59:59']);
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->filled('service_id')) {
+            $query->where('service_id', $request->service_id);
+        }
+
+        return $query->orderBy('created_at', 'desc');
+    }
+
+    // ✅ GET DATA: Khusus untuk PDF (Mengembalikan Collection)
     private function getData($request)
     {
         $query = Ticket::with(['service', 'staff', 'requester'])
@@ -121,6 +141,7 @@ class ReportController extends Controller
             $query->where('status', $request->status);
         }
 
+        // PDF tetap wajib pakai ->get()
         $tickets = $query->orderBy('created_at', 'desc')->get();
         
         $data = [
@@ -150,10 +171,11 @@ class ReportController extends Controller
             $query->where('status', $request->status);
         }
 
-        $tickets = $query->orderBy('created_at', 'desc')->get();
+        $query->orderBy('created_at', 'desc');
         
+        // ✅ UBAH: Hapus ->cursor(), Langsung kirim $query-nya ke Export
         return Excel::download(
-            new RekapLayananExport($tickets), 
+            new RekapLayananExport($query), 
             'Laporan_Seluruh_Kominfo.xlsx'
         );
     }
