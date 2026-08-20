@@ -89,11 +89,39 @@ Route::get('/public/operational-hours', function () {
 
 // ✅ LOGIN DENGAN THROTTLE
 Route::post('/login', function (Request $request) {
-    $request->validate([
-        'login_id' => 'required', 
-        'password' => 'required' 
-    ]);
+    if (empty($request->login_id) || empty($request->password)) {
+        return response()->json([
+            'message' => 'Email/NIP dan Password wajib diisi.'
+        ], 422);
+    }
 
+    $password = $request->password;
+    $missing = [];
+
+    if (strlen($password) < 8) {
+        $missing[] = 'minimal 8 karakter';
+    }
+    if (!preg_match('/[a-z]/', $password)) {
+        $missing[] = 'huruf kecil';
+    }
+    if (!preg_match('/[A-Z]/', $password)) {
+        $missing[] = 'huruf besar';
+    }
+    if (!preg_match('/[0-9]/', $password)) {
+        $missing[] = 'angka';
+    }
+    if (!preg_match('/[!@#$%^&*()_+\-=\[\]{}|;\':",.<>?\/\\\\`~]/', $password)) {
+        $missing[] = 'karakter khusus';
+    }
+
+    if (!empty($missing)) {
+        $pesan = 'Password tidak valid. Harus mengandung ' . implode(', ', $missing) . '.';
+        return response()->json([
+            'message' => $pesan
+        ], 422);
+    }
+
+    // Sisa kode login tetap sama...
     $loginId = trim($request->login_id);
     $fieldType = filter_var($loginId, FILTER_VALIDATE_EMAIL) ? 'email' : 'nip';
 
@@ -103,17 +131,12 @@ Route::post('/login', function (Request $request) {
 
     $user = \App\Models\User::where($fieldType, $loginId)->first();
 
-    if (!$user) {
+    if (!$user || !\Illuminate\Support\Facades\Hash::check($request->password, $user->password)) {
         return response()->json([
             'message' => 'Email/NIP atau Password tidak valid'
         ], 401);
     }
-
-    if (!\Illuminate\Support\Facades\Hash::check($request->password, $user->password)) {
-        return response()->json([
-            'message' => 'Email/NIP atau Password tidak valid'
-        ], 401);
-    }
+    
     $token = $user->createToken('api-token')->plainTextToken;
     
     $userData = $user->toArray();
@@ -127,7 +150,7 @@ Route::post('/login', function (Request $request) {
         'user' => $userData, 
         'token' => $token
     ]);
-})->middleware('throttle:10,1'); // MAKSIMAL 10x SALAH PASSWORD DALAM 1 MENIT
+})->middleware('throttle:10,1');
 
 // PUBLIC ROUTE UNTUK PREVIEW PDF
 Route::get('tickets/{ticket}/preview-pdf', [TicketController::class, 'previewPdf']);
@@ -301,6 +324,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reports/export', [ReportController::class, 'getCollectiveData']);
     Route::get('/reports/export-pdf', [ReportController::class, 'exportCollectivePdf'])->middleware('throttle:10,1');
     Route::get('/reports/export-excel', [ReportController::class, 'exportCollectiveExcel'])->middleware('throttle:10,1');
+    Route::post('/reports/export-word', [ReportController::class, 'exportCollectiveWord'])->middleware('throttle:10,1');
 
     // --- ROUTE KHUSUS PIMPINAN & ADMIN (DIBATASI ROLE) ---
     Route::prefix('pimpinan')->middleware('role:pimpinan,admin')->group(function () {

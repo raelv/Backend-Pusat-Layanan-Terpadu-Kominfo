@@ -908,26 +908,135 @@ if (isset($formData['wa'])) {
         return Excel::download(new TicketsExport, 'Rekap_Data_Tiket_Kominfo.xlsx');
     }
 
-    public function exportWord($id)
-    {
-        $ticket = Ticket::with(['service', 'staff', 'requester'])->find($id);
-        if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
+public function exportWord($id)
+{
+    $ticket = Ticket::with(['service', 'staff', 'requester', 'zoomLink'])->find($id);
+    if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
 
-        $phpWord = new PhpWord();
-        $section = $phpWord->addSection();
-        $section->addText('BUKTI PENERIMAAN LAYANAN', ['bold' => true, 'size' => 16, 'alignment' => 'center']);
-        $section->addText('Nomor: Ticket #' . $ticket->ticket_number, ['size' => 11, 'alignment' => 'center']);
-        $section->addTextBreak(1);
-        $section->addText('Hari / Tanggal    : ' . \Carbon\Carbon::parse($ticket->created_at)->translatedFormat('l, d F Y'));
-        $section->addText('Jenis Layanan      : ' . ($ticket->service->name ?? 'N/A'));
-        $section->addText('Status                : ' . strtoupper($ticket->status));
-        $section->addText('Pelaksana Staf    : ' . ($ticket->staff->name ?? 'Belum Ditugaskan'));
-        
-        $fileName = 'Bukti_Layanan_Ticket_' . $ticket->ticket_number . '.docx';
-        $tempFilePath = storage_path($fileName);
-        $phpWord->save($tempFilePath, 'Word2007');
-        return response()->download($tempFilePath)->deleteFileAfterSend(true);
+    $phpWord = new PhpWord();
+
+    // Default style
+    $phpWord->setDefaultFontName('Times New Roman');
+    $phpWord->setDefaultFontSize(12);
+
+    // ======= KOP SURAT =======
+    $headerSection = $phpWord->addSection([
+        'marginTop' => 1000,
+        'marginBottom' => 500,
+    ]);
+
+    // Logo
+    if (file_exists(public_path('images/logo-kominfo.png'))) {
+        $headerSection->addImage(public_path('images/logo-kominfo.png'), [
+            'width' => 70,
+            'height' => 70,
+            'alignment' => 'center',
+        ]);
     }
+
+    $headerSection->addText('PEMERINTAH KOTA BONTANG', [
+        'bold' => true, 'size' => 14, 'alignment' => 'center', 'spacing' => 0
+    ]);
+    $headerSection->addText('DINAS KOMUNIKASI DAN INFORMATIKA', [
+        'bold' => true, 'size' => 13, 'alignment' => 'center', 'spacing' => 0
+    ]);
+    $headerSection->addText('Jl. Brigjen Katamso No. 1, Bontang Utara, Kota Bontang, Kalimantan Timur', [
+        'size' => 10, 'alignment' => 'center', 'spacing' => 0
+    ]);
+    $headerSection->addText('Telp: (0548) 22222 | Website: kominfo.bontangkota.go.id', [
+        'size' => 10, 'alignment' => 'center', 'spacing' => 100
+    ]);
+
+    // Garis pembatas
+    $headerSection->addText('________________________________________', [
+        'alignment' => 'center', 'size' => 10, 'spacing' => 200
+    ]);
+
+    // ======= JUDUL =======
+    $headerSection->addText('BUKTI PENERIMAAN LAYANAN', [
+        'bold' => true, 'size' => 13, 'alignment' => 'center', 'spacing' => 300,
+        'underline' => 'single'
+    ]);
+    $headerSection->addText('Nomor: ' . $ticket->id . '/KOMINFO/' . date('m/Y', strtotime($ticket->created_at)), [
+        'size' => 11, 'alignment' => 'center', 'spacing' => 100
+    ]);
+
+    // ======= ISI =======
+    $headerSection->addText('Yang bertanda tangan di bawah ini, Kepala Dinas Komunikasi dan Informatika Kota Bontang, menerangkan bahwa telah menerima permohonan layanan dari:', [
+        'alignment' => 'both', 'spacing' => 200, 'indentation' => 720
+    ]);
+
+    // Tabel data
+    $tableData = [
+        ['Nama Pemohon', ': ' . ($ticket->requester->name ?? 'N/A')],
+        ['Email / OPD', ': ' . ($ticket->requester->email ?? '-')],
+        ['Jenis Layanan', ': ' . ($ticket->service->name ?? 'N/A')],
+        ['Hari / Tanggal', ': ' . \Carbon\Carbon::parse($ticket->created_at)->translatedFormat('l, d F Y')],
+    ];
+
+    if ($ticket->schedule_start) {
+        $tableData[] = [
+            'Jadwal Layanan', 
+            ': ' . \Carbon\Carbon::parse($ticket->schedule_start)->format('d F Y H:i') . ' s.d ' . \Carbon\Carbon::parse($ticket->schedule_end)->format('d F Y H:i')
+        ];
+    }
+
+    $tableData[] = ['Pelaksana Staf', ': ' . ($ticket->staff->name ?? 'Belum Ditugaskan')];
+
+    foreach ($tableData as $row) {
+        $table = $headerSection->addTable([
+            'width' => 100,
+            'unit' => 'pct',
+            'indentation' => 720,
+        ]);
+        $table->addRow();
+        $table->addCell(3500)->addText($row[0], ['bold' => true]);
+        $table->addCell(6500)->addText($row[1]);
+    }
+
+    // Detail form_data
+    $headerSection->addText('', ['spacing' => 200]);
+    $headerSection->addText('Detail permohonan yang diajukan:', [
+        'spacing' => 100, 'indentation' => 720
+    ]);
+
+    if ($ticket->form_data) {
+        foreach ($ticket->form_data as $key => $value) {
+            $label = ucfirst(str_replace('_', ' ', $key));
+            $val = is_array($value) ? implode(', ', $value) : $value;
+            $headerSection->addText('• ' . $label . ': ' . $val, [
+                'indentation' => 1080, 'spacing' => 50
+            ]);
+        }
+    }
+
+    $headerSection->addText('', ['spacing' => 200]);
+    $headerSection->addText('Surat bukti ini dibuat secara otomatis oleh sistem untuk dapat dipergunakan sebagaimana mestinya.', [
+        'alignment' => 'both', 'spacing' => 100, 'indentation' => 720
+    ]);
+
+    // ======= TANDA TANGAN =======
+    $headerSection->addText('', ['spacing' => 400]);
+    $ttdTable = $headerSection->addTable([
+        'width' => 40,
+        'unit' => 'pct',
+        'alignment' => 'right',
+    ]);
+    $ttdTable->addRow();
+    $ttdCell = $ttdTable->addCell(4000);
+    $ttdCell->addText('Bontang, ' . \Carbon\Carbon::now()->translatedFormat('d F Y'), ['alignment' => 'center']);
+    $ttdCell->addText('Kepala Dinas Kominfo,', ['alignment' => 'center']);
+    $ttdCell->addText('', ['spacing' => 800]);
+    $ttdCell->addText('________________________', ['alignment' => 'center']);
+    $ttdCell->addText('NIP. ................................', ['alignment' => 'center', 'size' => 10]);
+
+    // Simpan
+    $fileName = 'Bukti_Layanan_Ticket_' . $ticket->ticket_number . '.docx';
+    $tempFilePath = storage_path($fileName);
+    $phpWord->save($tempFilePath, 'Word2007');
+
+    return response()->download($tempFilePath)->deleteFileAfterSend(true);
+}
 
     public function getResubmitData($id)
     {

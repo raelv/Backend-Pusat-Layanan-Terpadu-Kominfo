@@ -78,7 +78,7 @@
 
     <!-- KOP SURAT -->
     <div class="header">
-        <img src="{{ asset('images/logo-kominfo.png') }}" alt="Logo Kominfo">
+        <img src="{{ public_path('images/logo-kominfo.png') }}" alt="Logo Kominfo">
         <h1>PEMERINTAH KOTA BONTANG</h1>
         <h2>DINAS KOMUNIKASI DAN INFORMATIKA</h2>
         <p>Jl. Brigjen Katamso No. 1, Bontang Utara, Kota Bontang, Kalimantan Timur</p>

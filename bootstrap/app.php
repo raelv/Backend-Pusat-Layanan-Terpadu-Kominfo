@@ -45,7 +45,7 @@ return Application::configure(basePath: dirname(__DIR__))
                     'message' => ($statusCode === 500 
                         ? 'Terjadi kesalahan internal pada server.' 
                         : ($exception->getMessage() ?: 'Terjadi kesaluran.')),
-                    'error' => app()->environment('local') ? $exception->getMessage() : null
+                    'error' => config('app.debug') ? $exception->getMessage() : null
                 ], $statusCode);
             }
 
