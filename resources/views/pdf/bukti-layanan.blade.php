@@ -2,155 +2,351 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Surat Permohonan Layanan</title>
+    <title>Bukti Penerimaan Layanan</title>
+
     <style>
-        @page { margin: 25mm 25mm 30mm 30mm; size: A4; }
-        
-        body { 
-            font-family: 'Times New Roman', Times, serif; 
-            font-size: 12pt; 
-            line-height: 1.6; 
-            color: #000; 
+        @page {
+            size: A4;
+            margin: 2cm 2.5cm 2cm 2.5cm;
         }
 
-        /* KOP SURAT */
-        .header {
-            text-align: center;
-            border-bottom: 3px solid #000;
-            padding-bottom: 10px;
-            margin-bottom: 30px;
-        }
-        .header img { width: 70px; height: auto; margin-bottom: 5px; }
-        .header h1 { margin: 0; font-size: 14pt; letter-spacing: 2px; }
-        .header h2 { margin: 3px 0; font-size: 13pt; }
-        .header p { margin: 2px 0; font-size: 10pt; }
-
-        /* JUDUL SURAT */
-        .title {
-            text-align: center;
-            margin-bottom: 25px;
-        }
-        .title h3 {
+        body {
+            font-family: "Times New Roman", Times, serif;
+            font-size: 12pt;
+            color: #000;
+            line-height: 1.5;
             margin: 0;
-            text-decoration: underline;
+            padding: 0;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        /* ========== KOP SURAT ========== */
+        .kop-table {
+            width: 100%;
+            border-bottom: 3.5px double #000;
+            padding-bottom: 6px;
+            margin-bottom: 20pt;
+        }
+
+        .logo-kiri {
+            width: 18%;
+            text-align: left;
+            vertical-align: middle;
+        }
+
+        .logo-kanan {
+            width: 18%;
+            text-align: right;
+            vertical-align: middle;
+        }
+
+        .kop-isi {
+            width: 64%;
+            text-align: center;
+            vertical-align: middle;
+        }
+
+        .kop-instansi {
+            font-size: 15pt;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+        }
+
+        .kop-dinas {
             font-size: 13pt;
+            font-weight: bold;
+            margin-bottom: 4px;
+            text-transform: uppercase;
         }
-        .title p { margin: 5px 0 0 0; font-size: 11pt; }
 
-        /* ISI SURAT */
-        .content {
+        .kop-alamat {
+            font-size: 9pt;
+            line-height: 1.2;
+        }
+
+        .kop-logo {
+            width: 75px;
+            height: 75px;
+            object-fit: contain;
+        }
+
+        /* ========== JUDUL SURAT ========== */
+        .judul-section {
+            text-align: center;
+            margin-bottom: 20pt;
+        }
+
+        .judul-text {
+            font-size: 13pt;
+            font-weight: bold;
+            text-decoration: underline;
+            margin-bottom: 4px;
+        }
+
+        .nomor-text {
+            font-size: 11pt;
+        }
+
+        /* ========== PARAGRAF PEMBUKA ========== */
+        .pembuka {
             text-align: justify;
-            margin-bottom: 20px;
-        }
-        .content p {
-            margin: 0 0 15px 0;
-            text-indent: 40px; /* Paragraf menjorok ke dalam */
+            text-justify: inter-word;
+            text-indent: 1cm;
+            margin-bottom: 12pt;
+            line-height: 1.5;
         }
 
-        /* TABEL DATA */
-        table.data {
-            margin: 0 0 20px 40px;
+        /* ========== TABEL DATA PEMOHON ========== */
+        .data-section {
+            margin-left: 1cm;
+            margin-bottom: 15pt;
+        }
+
+        .data-table td {
+            padding: 3pt 0;
+            vertical-align: top;
             font-size: 12pt;
         }
-        table.data td {
-            padding: 2px 0;
+
+        .data-label {
+            width: 150px;
+            font-weight: bold;
+        }
+
+        .data-titik {
+            width: 15px;
+            text-align: center;
+        }
+
+        .data-isi {
+            padding-left: 5px;
+        }
+
+        /* ========== KOTAK DETAIL PERMOHONAN ========== */
+        .detail-section {
+            margin-left: 1cm;
+            margin-right: 0.5cm;
+            margin-bottom: 15pt;
+        }
+
+        .detail-box {
+            border: 1px solid #000;
+            padding: 10pt 12pt;
+        }
+
+        .detail-judul {
+            font-size: 11pt;
+            font-weight: bold;
+            margin-bottom: 6pt;
+        }
+
+        .detail-list {
+            margin: 0;
+            padding-left: 15pt;
+        }
+
+        .detail-list li {
+            font-size: 11pt;
+            margin-bottom: 3pt;
+            line-height: 1.4;
+        }
+
+        .detail-kosong {
+            font-size: 11pt;
+            font-style: italic;
+        }
+
+        /* ========== PARAGRAF PENUTUP ========== */
+        .penutup {
+            text-align: justify;
+            text-justify: inter-word;
+            text-indent: 1cm;
+            margin-bottom: 30pt;
+            line-height: 1.5;
+        }
+
+        /* ========== TABEL TANDA TANGAN ========== */
+        .ttd-table {
+            width: 100%;
+            page-break-inside: avoid;
+        }
+
+        .ttd-kolom {
+            width: 50%;
+            text-align: center;
             vertical-align: top;
         }
-        table.data td.label {
-            width: 160px;
-        }
 
-        /* TANDA TANGAN */
-        .signature {
-            float: right;
-            width: 250px;
+        .ttd-kolom p {
+            margin: 0;
             text-align: center;
-            margin-top: 50px;
         }
-        .signature .space { height: 80px; }
-        .signature .name { font-weight: bold; text-decoration: underline; }
-        .signature .nip { font-size: 10pt; }
 
-        .clear { clear: both; }
+        .ttd-ruang {
+            height: 65pt; /* Ruang kosong untuk tanda tangan fisik/basah */
+        }
+
+        .ttd-garis {
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+
+        .ttd-nama {
+            font-weight: bold;
+            margin-top: 3px;
+        }
+
+        .ttd-nip {
+            font-size: 10pt;
+            margin-top: 2px;
+        }
     </style>
 </head>
+
 <body>
 
-    <!-- KOP SURAT -->
-    <div class="header">
-        <img src="{{ public_path('images/logo-kominfo.png') }}" alt="Logo Kominfo">
-        <h1>PEMERINTAH KOTA BONTANG</h1>
-        <h2>DINAS KOMUNIKASI DAN INFORMATIKA</h2>
-        <p>Jl. Brigjen Katamso No. 1, Bontang Utara, Kota Bontang, Kalimantan Timur</p>
-        <p>Telp: (0548) 22222 | Website: kominfo.bontangkota.go.id</p>
+    <!-- ========== KOP SURAT ========== -->
+    <table class="kop-table">
+        <tr>
+            <!-- Logo Kiri: Pemerintah Kota Bontang -->
+            <td class="logo-kiri">
+                @php $logoPemerintah = public_path('images/logo-pemerintah.png'); @endphp
+                @if(file_exists($logoPemerintah))
+                    <img src="data:image/png;base64,{{ base64_encode(file_get_contents($logoPemerintah)) }}" class="kop-logo" alt="Logo Pemerintah">
+                @endif
+            </td>
+
+            <!-- Teks Tengah Kop -->
+            <td class="kop-isi">
+                <div class="kop-instansi">Pemerintah Kota Bontang</div>
+                <div class="kop-dinas">Dinas Komunikasi dan Informatika</div>
+                <div class="kop-alamat">Jl. Brigjen Katamso No. 1, Bontang Utara, Kota Bontang, Kalimantan Timur</div>
+                <div class="kop-alamat">Telp: (0548) 22222 | Website: kominfo.bontangkota.go.id</div>
+            </td>
+
+            <!-- Logo Kanan: Kominfo -->
+            <td class="logo-kanan">
+                @php $logoKominfo = public_path('images/logo-kominfo.png'); @endphp
+                @if(file_exists($logoKominfo))
+                    <img src="data:image/png;base64,{{ base64_encode(file_get_contents($logoKominfo)) }}" class="kop-logo" alt="Logo Kominfo">
+                @endif
+            </td>
+        </tr>
+    </table>
+
+    <!-- ========== JUDUL SURAT ========== -->
+    <div class="judul-section">
+        <div class="judul-text">BUKTI PENERIMAAN LAYANAN</div>
+        <div class="nomor-text">Nomor: {{ $ticket->id }}/KOMINFO/{{ date('m/Y', strtotime($ticket->created_at)) }}</div>
     </div>
 
-    <!-- JUDUL SURAT -->
-    <div class="title">
-        <h3>SURAT BUKTI PENERIMAAN LAYANAN</h3>
-        <p>Nomor: {{ $ticket->id }}/KOMINFO/{{ date('m/Y', strtotime($ticket->created_at)) }}</p>
+    <!-- ========== PEMBUKA ========== -->
+    <div class="pembuka">
+        Yang bertanda tangan di bawah ini, Kepala Dinas Komunikasi dan Informatika Kota Bontang, dengan ini menerangkan bahwa telah menerima permohonan layanan dari:
     </div>
 
-    <!-- ISI SURAT -->
-    <div class="content">
-        <p>Yang bertanda tangan di bawah ini, Kepala Dinas Komunikasi dan Informatika Kota Bontang, dengan ini menerangkan bahwa telah menerima permohonan layanan dari:</p>
-        
-        <table class="data">
+    <!-- ========== DATA PEMOHON ========== -->
+    <div class="data-section">
+        <table class="data-table">
             <tr>
-                <td class="label">Nama Pemohon</td>
-                <td>: {{ $ticket->requester->name ?? 'N/A' }}</td>
+                <td class="data-label">Nama Pemohon</td>
+                <td class="data-titik">:</td>
+                <td class="data-isi">{{ $ticket->requester->name ?? 'N/A' }}</td>
             </tr>
             <tr>
-                <td class="label">Email / OPD</td>
-                <td>: {{ $ticket->requester->email ?? '-' }}</td>
+                <td class="data-label">Email / OPD</td>
+                <td class="data-titik">:</td>
+                <td class="data-isi">{{ $ticket->requester->email ?? '-' }}</td>
             </tr>
             <tr>
-                <td class="label">Jenis Layanan</td>
-                <td>: {{ $ticket->service->name ?? 'N/A' }}</td>
+                <td class="data-label">Jenis Layanan</td>
+                <td class="data-titik">:</td>
+                <td class="data-isi">{{ $ticket->service->name ?? 'N/A' }}</td>
             </tr>
             <tr>
-                <td class="label">Hari / Tanggal</td>
-                <td>: {{ \Carbon\Carbon::parse($ticket->created_at)->translatedFormat('l, d F Y') }}</td>
+                <td class="data-label">Hari / Tanggal</td>
+                <td class="data-titik">:</td>
+                <td class="data-isi">{{ \Carbon\Carbon::parse($ticket->created_at)->locale('id')->isoFormat('dddd, D MMMM Y') }}</td>
             </tr>
             @if($ticket->schedule_start)
             <tr>
-                <td class="label">Jadwal Layanan</td>
-                <td>: {{ \Carbon\Carbon::parse($ticket->schedule_start)->format('d F Y H:i') }} s.d {{ \Carbon\Carbon::parse($ticket->schedule_end)->format('d F Y H:i') }}</td>
+                <td class="data-label">Jadwal Layanan</td>
+                <td class="data-titik">:</td>
+                <td class="data-isi">
+                    {{ \Carbon\Carbon::parse($ticket->schedule_start)->locale('id')->isoFormat('D MMMM Y, H:i') }} s.d. {{ \Carbon\Carbon::parse($ticket->schedule_end)->format('H:i') }} WITA
+                </td>
             </tr>
             @endif
             <tr>
-                <td class="label">Pelaksana Staf</td>
-                <td>: {{ $ticket->staff->name ?? 'Belum Ditugaskan' }}</td>
+                <td class="data-label">Pelaksana Staf</td>
+                <td class="data-titik">:</td>
+                <td class="data-isi">{{ $ticket->staff->name ?? 'Belum Ditugaskan' }}</td>
+            </tr>
+            <tr>
+                <td class="data-label">Status</td>
+                <td class="data-titik">:</td>
+                <td class="data-isi" style="font-weight: bold;">{{ strtoupper($ticket->status) }}</td>
             </tr>
         </table>
+    </div>
 
-        <p>Adapun keterangan/detail permohonan yang diajukan adalah sebagai berikut:</p>
-        
-        <div style="margin: 0 0 20px 40px; border: 1px solid #000; padding: 10px;">
-            <ul style="margin: 0; padding-left: 20px;">
-                @if($ticket->form_data)
+    <!-- ========== DETAIL PERMOHONAN ========== -->
+    <div class="detail-section">
+        <div class="detail-box">
+            <div class="detail-judul">Detail permohonan yang diajukan:</div>
+            @if($ticket->form_data && count($ticket->form_data) > 0)
+                <ul class="detail-list">
                     @foreach($ticket->form_data as $key => $value)
-                        <li>{{ ucfirst(str_replace('_', ' ', $key)) }}: {{ is_array($value) ? implode(', ', $value) : $value }}</li>
+                        @if($key !== 'wa')
+                        <li>
+                            <strong>{{ ucfirst(str_replace('_', ' ', $key)) }}:</strong>
+                            @if(is_array($value))
+                                {{ implode(', ', $value) }}
+                            @else
+                                {{ $value }}
+                            @endif
+                        </li>
+                        @endif
                     @endforeach
-                @else
-                    <li>Tidak ada detail tambahan.</li>
-                @endif
-            </ul>
+                </ul>
+            @else
+                <div class="detail-kosong">Tidak ada detail tambahan.</div>
+            @endif
         </div>
-
-        <p>Surat bukti ini dibuat secara otomatis oleh sistem untuk dapat dipergunakan sebagaimana mestinya.</p>
     </div>
 
-    <!-- TANDA TANGAN -->
-    <div class="signature">
-        <p>Bontang, {{ \Carbon\Carbon::now()->translatedFormat('d F Y') }}</p>
-        <p>Kepala Dinas Kominfo,</p>
-        <div class="space"></div>
-        <p class="name">________________________</p>
-        <p class="nip">NIP. ................................</p>
+    <!-- ========== PENUTUP ========== -->
+    <div class="penutup">
+        Surat bukti ini dibuat secara otomatis oleh sistem SIKOMA Dinas Komunikasi dan Informatika Kota Bontang untuk dapat dipergunakan sebagaimana mestinya.
     </div>
 
-    <div class="clear"></div>
+    <!-- ========== TANDA TANGAN ========== -->
+    <table class="ttd-table">
+        <tr>
+            <td class="ttd-kolom">
+                <p>Bontang, {{ \Carbon\Carbon::now()->locale('id')->isoFormat('D MMMM Y') }}</p>
+                <p>Pelaksana Layanan,</p>
+                <div class="ttd-ruang"></div>
+                <p class="ttd-garis">________________________</p>
+                <p class="ttd-nama">{{ $ticket->staff->name ?? 'Belum Ditugaskan' }}</p>
+                <p class="ttd-nip">NIP. {{ $ticket->staff->nip ?? '................................' }}</p>
+            </td>
+            <td class="ttd-kolom">
+                <p>Bontang, {{ \Carbon\Carbon::now()->locale('id')->isoFormat('D MMMM Y') }}</p>
+                <p>Kepala Dinas Kominfo,</p>
+                <div class="ttd-ruang"></div>
+                <p class="ttd-garis">________________________</p>
+                <p class="ttd-nama">________________________</p>
+                <p class="ttd-nip">NIP. ................................</p>
+            </td>
+        </tr>
+    </table>
 
 </body>
 </html>

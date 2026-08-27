@@ -143,7 +143,7 @@ class UserManagementController extends Controller
 
         if ($user->active_task_count > 0) {
             return response()->json([
-                'message' => 'Staff sedang mengerjakan tugas sehingga perubahan Role atau Bidang tidak dapat dilakukan. Selesaikan seluruh tugas aktif terlebih dahulu.'
+                'message' => 'Staff sedang mengerjakan tugas sehingga Bidang tidak dapat diubah. Selesaikan seluruh tugas aktif terlebih dahulu.'
             ], 422);
         }
 
@@ -186,8 +186,8 @@ class UserManagementController extends Controller
         }
 
         // ✅ VALIDASI PRD: Cek kelengkapan data Bidang
-        if (empty($user->bidang) || is_null($user->bidang)) {
-            return response()->json(['message' => 'Bidang / Instansi wajib dipilih terlebih dahulu.'], 422);
+        if (empty($user->service_access) || is_null($user->service_access) || count($user->service_access) === 0) {
+            return response()->json(['message' => 'Hak Akses Layanan wajib dipilih terlebih dahulu.'], 422);
         }
 
         $user->update([
@@ -205,7 +205,7 @@ class UserManagementController extends Controller
      */
     public function syncUserBidangs(Request $request, $id)
     {
-        $user = User::find($id);
+        $user = \App\Models\User::find($id);
         if (!$user) {
             return response()->json(['message' => 'User tidak ditemukan'], 404);
         }
@@ -221,16 +221,30 @@ class UserManagementController extends Controller
             ], 422);
         }
 
-        // ✅ VALIDASI PRD: Cek kelengkapan Hak Akses
-        if (empty($user->service_access) || is_null($user->service_access) || count($user->service_access) === 0) {
-            return response()->json(['message' => 'Hak Akses Layanan wajib dipilih terlebih dahulu.'], 422);
+        // ✅ CEK KOSONG JANGAN DI-SYNC
+        if (empty($request->bidang_ids)) {
+            return response()->json(['message' => 'Tidak ada bidang yang dipilih. Tidak ada yang diubah.'], 422);
         }
 
+        // ✅ LAKUKAN SYNC JIKA ADA ISIAN
         $user->bidangs()->sync($request->bidang_ids);
 
         return response()->json([
             'message' => 'Berhasil memperbarui bidang staff.',
             'data' => $user->load('bidangs')
         ]);
+    }
+
+    /**
+     * Kick User (Force Logout dari semua perangkat)
+     */
+    public function kick($id)
+    {
+        $user = \App\Models\User::find($id);
+        if (!$user) {
+            return response()->json(['message' => 'User tidak ditemukan'], 404);
+        }
+        $user->tokens()->delete();
+        return response()->json(['message' => "Berhasil mengeluarkan user {$user->name} dari sistem."]);
     }
 }

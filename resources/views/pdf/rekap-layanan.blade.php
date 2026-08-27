@@ -1,229 +1,888 @@
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
     <meta charset="utf-8">
+
+    <title>Laporan Rekapitulasi Layanan</title>
+
     <style>
-        @page { 
-            margin: 20mm 15mm 25mm 20mm; 
-            size: A4 landscape; 
-        }
-        
-        body { 
-            font-family: 'Times New Roman', Times, serif; 
-            font-size: 10pt; 
-            color: #000; 
+
+        /* =====================================================
+           PENGATURAN HALAMAN WORD
+           ===================================================== */
+
+        @page {
+            size: A4 landscape;
+            margin: 1.5cm 1.5cm 1.8cm 1.5cm;
         }
 
-        /* KOP SURAT */
-        .kop {
-            text-align: center;
-            border-bottom: 3px double #000;
-            padding-bottom: 8px;
-            margin-bottom: 15px;
-        }
-        .kop img { 
-            width: 55px; 
-            height: auto; 
-            margin-bottom: 3px; 
-        }
-        .kop h1 { 
-            margin: 0; 
-            font-size: 13pt; 
-            letter-spacing: 1.5px; 
-        }
-        .kop h2 { 
-            margin: 2px 0; 
-            font-size: 11pt; 
-        }
-        .kop p { 
-            margin: 1px 0; 
-            font-size: 8pt; 
-        }
-
-        /* JUDUL */
-        .judul {
-            text-align: center;
-            margin-bottom: 12px;
-        }
-        .judul h3 {
+        body {
             margin: 0;
-            font-size: 12pt;
+            padding: 0;
+
+            font-family: "Times New Roman", Times, serif;
+            font-size: 9pt;
+
+            color: #000000;
+
+            line-height: 1.3;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        td,
+        th {
+            vertical-align: middle;
+        }
+
+        p {
+            margin: 0;
+            padding: 0;
+        }
+
+
+        /* =====================================================
+           UTILITY
+           ===================================================== */
+
+        .center {
+            text-align: center;
+        }
+
+        .left {
+            text-align: left;
+        }
+
+        .right {
+            text-align: right;
+        }
+
+        .bold {
+            font-weight: bold;
+        }
+
+        .underline {
             text-decoration: underline;
         }
 
-        /* INFO FILTER */
-        .info {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 10px;
-            font-size: 9pt;
-        }
-        .info span {
-            background: #f0f0f0;
-            padding: 3px 8px;
-            border-radius: 3px;
+        .small {
+            font-size: 7.5pt;
         }
 
-        /* TABEL */
-        table { 
-            width: 100%; 
-            border-collapse: collapse; 
-            margin-bottom: 15px;
-        }
-        th, td { 
-            border: 1px solid #333; 
-            padding: 5px 6px; 
-            text-align: left; 
-            font-size: 9pt;
-        }
-        thead th {
-            background-color: #1F4E79;
-            color: #fff;
-            font-weight: bold;
-            text-align: center;
-            font-size: 8.5pt;
-        }
-        tbody tr:nth-child(even) {
-            background-color: #E8F0FE;
-        }
-        .text-center { text-align: center; }
-        .text-bold { font-weight: bold; }
-
-        /* FOOTER */
-        .footer {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 20px;
+        .info-text {
             font-size: 8pt;
-            color: #666;
         }
 
-        /* TANDA TANGAN */
-        .ttd-container {
-            display: flex;
-            justify-content: flex-end;
-            margin-top: 30px;
-        }
-        .ttd {
-            width: 200px;
-            text-align: center;
-            font-size: 10pt;
-        }
-        .ttd .space { height: 60px; }
-        .ttd .nama { 
-            font-weight: bold; 
-            text-decoration: underline; 
-        }
-        .ttd .nip { font-size: 9pt; }
 
-        /* EMPTY STATE */
-        .empty {
+        /* =====================================================
+           KOP SURAT
+           KHUSUS WORD
+           ===================================================== */
+
+        .kop-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .kop-table td {
+            border: none;
+            padding: 0;
+        }
+
+        .logo-cell {
+            width: 65px;
             text-align: center;
-            padding: 30px;
+            vertical-align: middle;
+        }
+
+        .logo {
+            width: 52px;
+            height: 52px;
+        }
+
+        .kop-content {
+            text-align: center;
+        }
+
+        .kop-judul {
+            font-size: 12.5pt;
+            font-weight: bold;
+            line-height: 1.2;
+        }
+
+        .kop-sub {
+            font-size: 10.5pt;
+            font-weight: bold;
+            line-height: 1.25;
+        }
+
+        .kop-alamat {
+            font-size: 7.5pt;
+            line-height: 1.25;
+        }
+
+        .kop-garis {
+            height: 7px;
+            border-bottom: 3px double #000000;
+        }
+
+
+        /* =====================================================
+           JUDUL LAPORAN
+           ===================================================== */
+
+        .judul-wrapper {
+            margin-top: 14pt;
+            margin-bottom: 12pt;
+        }
+
+        .judul-laporan {
+            font-size: 13pt;
+            font-weight: bold;
+            text-decoration: underline;
+        }
+
+        .periode {
+            margin-top: 4pt;
+            font-size: 8pt;
+        }
+
+
+        /* =====================================================
+           TABEL LAPORAN
+           ===================================================== */
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .data-table th {
+            padding: 5px 4px;
+
+            background-color: #1F4E79;
+            color: #FFFFFF;
+
+            border: 1px solid #000000;
+
+            font-size: 7.8pt;
+            font-weight: bold;
+
+            text-align: center;
+            vertical-align: middle;
+
+            line-height: 1.2;
+        }
+
+        .data-table td {
+            padding: 4px 4px;
+
+            border: 1px solid #000000;
+
+            font-size: 7.8pt;
+
+            vertical-align: middle;
+
+            line-height: 1.3;
+        }
+
+
+        /* =====================================================
+           LEBAR KOLOM
+           ===================================================== */
+
+        .col-no {
+            width: 3%;
+        }
+
+        .col-ticket {
+            width: 7%;
+        }
+
+        .col-category {
+            width: 10%;
+        }
+
+        .col-requester {
+            width: 19%;
+        }
+
+        .col-title {
+            width: 23%;
+        }
+
+        .col-created {
+            width: 9%;
+        }
+
+        .col-schedule {
+            width: 15%;
+        }
+
+        .col-staff {
+            width: 14%;
+        }
+
+
+        /* =====================================================
+           BARIS TABEL
+           ===================================================== */
+
+        .ganjil {
+            background-color: #F4F6F8;
+        }
+
+        .genap {
+            background-color: #FFFFFF;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .text-left {
+            text-align: left;
+        }
+
+
+        /* =====================================================
+           DATA KOSONG
+           ===================================================== */
+
+        .empty-row td {
+            padding: 18px 10px;
+
+            text-align: center;
+
+            font-size: 8pt;
             font-style: italic;
-            color: #666;
         }
+
+
+        /* =====================================================
+           FOOTER
+           ===================================================== */
+
+        .footer-wrapper {
+            margin-top: 8pt;
+        }
+
+        .footer-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .footer-table td {
+            border: none;
+            padding: 0;
+
+            font-size: 7.5pt;
+        }
+
+
+        /* =====================================================
+           TANDA TANGAN
+           ===================================================== */
+
+        .signature-wrapper {
+            margin-top: 18pt;
+        }
+
+        .signature-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .signature-table td {
+            border: none;
+            padding: 0;
+        }
+
+        .signature-space-left {
+            width: 68%;
+        }
+
+        .signature {
+            width: 32%;
+
+            text-align: center;
+
+            font-size: 8pt;
+        }
+
+        .signature p {
+            margin: 0;
+            padding: 0;
+        }
+
+        .signature-space {
+            height: 55pt;
+        }
+
+        .signature-name {
+            font-weight: bold;
+            text-decoration: underline;
+        }
+
+        .nip {
+            margin-top: 2pt !important;
+            font-size: 7.5pt;
+        }
+
+
+        /* =====================================================
+           KHUSUS KOMPATIBILITAS WORD
+           ===================================================== */
+
+        img {
+            display: inline-block;
+        }
+
+        ul {
+            margin-top: 0;
+        }
+
     </style>
+
 </head>
+
+
 <body>
 
-    <!-- KOP SURAT -->
-    <div class="kop">
-        @if(file_exists(public_path('images/logo-kominfo.png')))
-            <img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('images/logo-kominfo.png'))) }}" alt="Logo">
-        @endif
-        <h1>PEMERINTAH KOTA BONTANG</h1>
-        <h2>DINAS KOMUNIKASI DAN INFORMATIKA</h2>
-        <p>Jl. Brigjen Katamso No. 1, Bontang Utara, Kota Bontang, Kalimantan Timur</p>
-        <p>Telp: (0548) 22222 | Website: kominfo.bontangkota.go.id</p>
-    </div>
 
-    <!-- JUDUL LAPORAN -->
-    <div class="judul">
-        <h3>LAPORAN REKAPITULASI LAYANAN</h3>
-    </div>
+    <!-- =====================================================
+         KOP SURAT
+         ===================================================== -->
 
-    <!-- INFO FILTER -->
-    <div class="info">
-        <span>📅 Periode: {{ \Carbon\Carbon::parse($start_date)->format('d F Y') }} s/d {{ \Carbon\Carbon::parse($end_date)->format('d F Y') }}</span>
-        <span>📂 Layanan: {{ $filter_service }}</span>
-        <span>📊 Status: {{ $filter_status ?? 'Semua Status' }}</span>
-    </div>
+    <table class="kop-table">
 
-    <!-- TABEL DATA -->
-    <table>
-        <thead>
-            <tr>
-                <th width="3%">No</th>
-                <th width="8%">ID Tiket</th>
-                <th width="12%">Kategori</th>
-                <th width="20%">Instansi / Pemohon</th>
-                <th width="20%">Judul / Perihal</th>
-                <th width="10%">Tgl Pengajuan</th>
-                <th width="14%">Tgl Pelaksanaan</th>
-                <th width="13%">Staff / Teknisi</th>
-                <th width="10%">Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            @forelse($tickets as $index => $ticket)
-                <?php
-                    $judul = $ticket->form_data['namaAplikasi'] ?? $ticket->form_data['topik'] ?? $ticket->form_data['nama_acara'] ?? $ticket->form_data['nama_kegiatan'] ?? '-';
-                    
-                    $pelaksanaan = '-';
-                    if ($ticket->schedule_start) {
-                        $pelaksanaan = $ticket->schedule_start->format('d/m/Y H:i') . ' s/d ' . $ticket->schedule_end->format('H:i');
-                    } elseif ($ticket->due_date) {
-                        $pelaksanaan = $ticket->due_date->format('d/m/Y');
-                    }
+        <tr>
 
-                    $pemohon = trim(($ticket->requester->name ?? '-') . ' (' . ($ticket->requester->bidang ?? 'OPD') . ')');
-                    $staffName = $ticket->staff ? $ticket->staff->name : '-';
+            <!-- LOGO -->
 
-                    $statusLabel = strtoupper($ticket->status);
-                    if (in_array($ticket->status, ['assigned', 'in_progress', 'approved_admin'])) $statusLabel = 'DIPROSES';
-                    if (in_array($ticket->status, ['pending', 'queued'])) $statusLabel = 'MENUNGGU';
-                    if ($ticket->status === 'completed') $statusLabel = 'SELESAI';
-                    if ($ticket->status === 'rejected') $statusLabel = 'DITOLAK';
-                    if ($ticket->status === 'cancelled') $statusLabel = 'DIBATALKAN';
-                    if ($ticket->status === 'expired') $statusLabel = 'KADALUARSA';
-                    if ($ticket->status === 'needs_reschedule') $statusLabel = 'JADWAL ULANG';
-                ?>
-                <tr>
-                    <td class="text-center">{{ $index + 1 }}</td>
-                    <td class="text-center">#{{ $ticket->ticket_number }}</td>
-                    <td class="text-center">{{ strtoupper($ticket->service->category ?? '-') }}</td>
-                    <td>{{ $pemohon }}</td>
-                    <td>{{ $judul }}</td>
-                    <td class="text-center">{{ $ticket->created_at->format('d/m/Y') }}</td>
-                    <td class="text-center">{{ $pelaksanaan }}</td>
-                    <td>{{ $staffName }}</td>
-                    <td class="text-center text-bold">{{ $statusLabel }}</td>
-                </tr>
-            @empty
-                <tr>
-                    <td colspan="9" class="empty">Tidak ada data pada periode dan filter yang dipilih.</td>
-                </tr>
-            @endforelse
-        </tbody>
+            <td class="logo-cell" rowspan="4">
+
+                @if(file_exists(public_path('images/logo-kominfo.png')))
+
+                    <img
+                        src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('images/logo-kominfo.png'))) }}"
+                        class="logo"
+                        alt="Logo Pemerintah Kota Bontang"
+                    >
+
+                @endif
+
+            </td>
+
+
+            <!-- NAMA PEMERINTAH -->
+
+            <td class="kop-content">
+
+                <div class="kop-judul">
+                    PEMERINTAH KOTA BONTANG
+                </div>
+
+            </td>
+
+        </tr>
+
+
+        <!-- NAMA DINAS -->
+
+        <tr>
+
+            <td class="kop-content">
+
+                <div class="kop-sub">
+                    DINAS KOMUNIKASI DAN INFORMATIKA
+                </div>
+
+            </td>
+
+        </tr>
+
+
+        <!-- ALAMAT -->
+
+        <tr>
+
+            <td class="kop-content">
+
+                <div class="kop-alamat">
+                    Jl. Brigjen Katamso No. 1, Bontang Utara,
+                    Kota Bontang
+                </div>
+
+            </td>
+
+        </tr>
+
+
+        <!-- KONTAK -->
+
+        <tr>
+
+            <td class="kop-content">
+
+                <div class="kop-alamat">
+                    Telp: (0548) 22222
+                    &nbsp;|&nbsp;
+                    Website: kominfo.bontangkota.go.id
+                </div>
+
+            </td>
+
+        </tr>
+
+
+        <!-- GARIS KOP -->
+
+        <tr>
+
+            <td></td>
+
+            <td class="kop-garis"></td>
+
+        </tr>
+
     </table>
 
-    <!-- FOOTER INFO -->
-    <div class="footer">
-        <span>Total Data: {{ $tickets->count() }} tiket</span>
-        <span>Dicetak: {{ $printed_at ?? now()->translatedFormat('d F Y, H:i') }} WITA</span>
+
+    <!-- =====================================================
+         JUDUL LAPORAN
+         ===================================================== -->
+
+    <table class="judul-wrapper">
+
+        <tr>
+
+            <td class="center">
+
+                <div class="judul-laporan">
+                    LAPORAN REKAPITULASI LAYANAN
+                </div>
+
+
+                <div class="periode">
+
+                    Periode:
+                    {{ \Carbon\Carbon::parse($start_date)->translatedFormat('d F Y') }}
+
+                    s/d
+
+                    {{ \Carbon\Carbon::parse($end_date)->translatedFormat('d F Y') }}
+
+                    &nbsp;&nbsp;|&nbsp;&nbsp;
+
+                    Layanan:
+                    {{ $filter_service ?? 'Semua Layanan' }}
+
+                    &nbsp;&nbsp;|&nbsp;&nbsp;
+
+                    Status:
+                    {{ $filter_status ?? 'Semua Status' }}
+
+                </div>
+
+            </td>
+
+        </tr>
+
+    </table>
+
+
+    <!-- =====================================================
+         TABEL DATA
+         ===================================================== -->
+
+    <table class="data-table">
+
+        <thead>
+
+            <tr>
+
+                <th class="col-no">
+                    No
+                </th>
+
+                <th class="col-ticket">
+                    ID Tiket
+                </th>
+
+                <th class="col-category">
+                    Kategori
+                </th>
+
+                <th class="col-requester">
+                    Instansi / Pemohon
+                </th>
+
+                <th class="col-title">
+                    Judul / Perihal
+                </th>
+
+                <th class="col-created">
+                    Tgl Pengajuan
+                </th>
+
+                <th class="col-schedule">
+                    Tgl Pelaksanaan
+                </th>
+
+                <th class="col-staff">
+                    Staff / Teknisi
+                </th>
+
+            </tr>
+
+        </thead>
+
+
+        <tbody>
+
+
+            @forelse($tickets as $index => $ticket)
+
+                @php
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | JUDUL / PERIHAL
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $judul =
+                        $ticket->form_data['namaAplikasi']
+                        ?? $ticket->form_data['topik']
+                        ?? $ticket->form_data['nama_acara']
+                        ?? $ticket->form_data['nama_kegiatan']
+                        ?? '-';
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | JADWAL PELAKSANAAN
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $pelaksanaan = '-';
+
+                    if ($ticket->schedule_start) {
+
+                        $pelaksanaan =
+                            $ticket->schedule_start->format('d/m/Y H:i')
+                            . ' s/d '
+                            . $ticket->schedule_end->format('H:i')
+                            . ' WITA';
+
+                    } elseif ($ticket->due_date) {
+
+                        $pelaksanaan =
+                            $ticket->due_date->format('d/m/Y');
+
+                    }
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | PEMOHON
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $pemohon =
+                        ($ticket->requester->name ?? '-')
+                        . ' ('
+                        . ($ticket->requester->bidang ?? 'OPD')
+                        . ')';
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | STAFF
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $staffName =
+                        $ticket->staff
+                        ? $ticket->staff->name
+                        : '-';
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | STATUS
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $statusLabel = strtoupper($ticket->status);
+
+                    if (
+                        in_array(
+                            $ticket->status,
+                            [
+                                'assigned',
+                                'in_progress',
+                                'approved_admin'
+                            ]
+                        )
+                    ) {
+
+                        $statusLabel = 'DIPROSES';
+
+                    }
+
+
+                    if (
+                        in_array(
+                            $ticket->status,
+                            [
+                                'pending',
+                                'queued'
+                            ]
+                        )
+                    ) {
+
+                        $statusLabel = 'MENUNGGU';
+
+                    }
+
+
+                    if ($ticket->status === 'completed') {
+
+                        $statusLabel = 'SELESAI';
+
+                    }
+
+
+                    if ($ticket->status === 'rejected') {
+
+                        $statusLabel = 'DITOLAK';
+
+                    }
+
+
+                    if ($ticket->status === 'cancelled') {
+
+                        $statusLabel = 'DIBATALKAN';
+
+                    }
+
+
+                    if ($ticket->status === 'expired') {
+
+                        $statusLabel = 'KADALUARSA';
+
+                    }
+
+
+                    if ($ticket->status === 'needs_reschedule') {
+
+                        $statusLabel = 'JADWAL ULANG';
+
+                    }
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | ZEBRA ROW
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $rowClass =
+                        ($index % 2 === 0)
+                        ? 'ganjil'
+                        : 'genap';
+
+                @endphp
+
+
+                <tr class="{{ $rowClass }}">
+
+
+                    <!-- NO -->
+
+                    <td class="text-center">
+                        {{ $index + 1 }}
+                    </td>
+
+
+                    <!-- ID TIKET -->
+
+                    <td class="text-center">
+                        #{{ $ticket->ticket_number }}
+                    </td>
+
+
+                    <!-- KATEGORI -->
+
+                    <td class="text-center">
+                        {{ strtoupper($ticket->service->category ?? '-') }}
+                    </td>
+
+
+                    <!-- PEMOHON -->
+
+                    <td class="text-left">
+                        {{ $pemohon }}
+                    </td>
+
+
+                    <!-- JUDUL -->
+
+                    <td class="text-left">
+                        {{ $judul }}
+                    </td>
+
+
+                    <!-- TANGGAL PENGAJUAN -->
+
+                    <td class="text-center">
+                        {{ $ticket->created_at->format('d/m/Y') }}
+                    </td>
+
+
+                    <!-- TANGGAL PELAKSANAAN -->
+
+                    <td class="text-center">
+                        {{ $pelaksanaan }}
+                    </td>
+
+
+                    <!-- STAFF -->
+
+                    <td class="text-left">
+                        {{ $staffName }}
+                    </td>
+
+
+                </tr>
+
+
+            @empty
+
+
+                <tr class="empty-row">
+
+                    <td colspan="8">
+
+                        Tidak ada data pada periode yang dipilih.
+
+                    </td>
+
+                </tr>
+
+
+            @endforelse
+
+
+        </tbody>
+
+    </table>
+
+
+    <!-- =====================================================
+         INFORMASI FOOTER
+         ===================================================== -->
+
+    <div class="footer-wrapper">
+
+        <table class="footer-table">
+
+            <tr>
+
+                <td>
+
+                    <strong>Total Data:</strong>
+                    {{ $tickets->count() }} tiket
+
+                </td>
+
+
+                <td class="right">
+
+                    Dicetak:
+                    {{ $printed_at ?? now()->translatedFormat('d F Y, H:i') }}
+                    WITA
+
+                </td>
+
+            </tr>
+
+        </table>
+
     </div>
 
-    <!-- TANDA TANGAN -->
-    <div class="ttd-container">
-        <div class="ttd">
-            <p>Bontang, {{ \Carbon\Carbon::now()->translatedFormat('d F Y') }}</p>
-            <p>Kepala Dinas Kominfo,</p>
-            <div class="space"></div>
-            <p class="nama">________________________</p>
-            <p class="nip">NIP. ................................</p>
-        </div>
+
+    <!-- =====================================================
+         TANDA TANGAN
+         ===================================================== -->
+
+    <div class="signature-wrapper">
+
+        <table class="signature-table">
+
+            <tr>
+
+
+                <!-- RUANG KOSONG -->
+
+                <td class="signature-space-left">
+                    &nbsp;
+                </td>
+
+
+                <!-- TANDA TANGAN -->
+
+                <td class="signature">
+
+
+                    <p>
+
+                        Bontang,
+                        {{ \Carbon\Carbon::now()->translatedFormat('d F Y') }}
+
+                    </p>
+
+
+                    <p>
+                        Kepala Dinas Kominfo,
+                    </p>
+
+
+                    <div class="signature-space">
+                        &nbsp;
+                    </div>
+
+
+                    <p class="signature-name">
+
+                        ____________________________
+
+                    </p>
+
+
+                    <p class="nip">
+
+                        NIP. ........................................
+
+                    </p>
+
+
+                </td>
+
+
+            </tr>
+
+        </table>
+
     </div>
+
 
 </body>
+
 </html>

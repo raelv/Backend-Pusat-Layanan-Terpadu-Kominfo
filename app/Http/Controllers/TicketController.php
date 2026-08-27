@@ -14,6 +14,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use App\Exports\TicketsExport;
 use Maatwebsite\Excel\Facades\Excel;
 use PhpOffice\PhpWord\PhpWord;
+use App\Exports\BuktiLayananExport;
 
 class TicketController extends Controller
 {
@@ -911,149 +912,235 @@ if (isset($formData['wa'])) {
 public function exportWord($id)
 {
     $ticket = Ticket::with(['service', 'staff', 'requester', 'zoomLink'])->find($id);
-    if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
 
-    $phpWord = new PhpWord();
+    if (!$ticket) {
+        return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
+    }
 
-    // Default style
+    $phpWord = new \PhpOffice\PhpWord\PhpWord();
     $phpWord->setDefaultFontName('Times New Roman');
     $phpWord->setDefaultFontSize(12);
 
-    // ======= KOP SURAT =======
-    $headerSection = $phpWord->addSection([
-        'marginTop' => 1000,
-        'marginBottom' => 500,
+    $section = $phpWord->addSection([
+        'pageSizeW'    => \PhpOffice\PhpWord\Shared\Converter::cmToTwip(21),
+        'pageSizeH'    => \PhpOffice\PhpWord\Shared\Converter::cmToTwip(29.7),
+        'marginTop'    => \PhpOffice\PhpWord\Shared\Converter::cmToTwip(2),
+        'marginRight'  => \PhpOffice\PhpWord\Shared\Converter::cmToTwip(2.5),
+        'marginBottom' => \PhpOffice\PhpWord\Shared\Converter::cmToTwip(2),
+        'marginLeft'   => \PhpOffice\PhpWord\Shared\Converter::cmToTwip(2.5),
     ]);
 
-    // Logo
-    if (file_exists(public_path('images/logo-kominfo.png'))) {
-        $headerSection->addImage(public_path('images/logo-kominfo.png'), [
-            'width' => 70,
-            'height' => 70,
-            'alignment' => 'center',
-        ]);
+    // ========== FONT ONLY ==========
+    $f12 = ['name' => 'Times New Roman', 'size' => 12];
+    $f10 = ['name' => 'Times New Roman', 'size' => 10];
+    $f9  = ['name' => 'Times New Roman', 'size' => 9];
+    $f12b = ['name' => 'Times New Roman', 'size' => 12, 'bold' => true];
+    $f15b = ['name' => 'Times New Roman', 'size' => 15, 'bold' => true];
+    $f13b = ['name' => 'Times New Roman', 'size' => 13, 'bold' => true];
+    $f14bu = ['name' => 'Times New Roman', 'size' => 14, 'bold' => true, 'underline' => 'single'];
+
+    // ========== HELPER ==========
+    $addRow = function ($table, $label, $value) use ($f12, $f12b) {
+        $table->addRow();
+        $c1 = $table->addCell(3500, ['valign' => 'top']);
+        $c1->addText($label, $f12b);
+        $c2 = $table->addCell(500, ['valign' => 'top']);
+        $c2->addText(':', $f12, ['alignment' => 'center']);
+        $c3 = $table->addCell(6000, ['valign' => 'top']);
+        $c3->addText($value, $f12);
+    };
+
+    // ========== KOP SURAT ==========
+    $logoPemerintah = public_path('images/logo-pemerintah.png');
+    $logoKominfo = public_path('images/logo-kominfo.png');
+
+    $kopTable = $section->addTable(['width' => 100, 'unit' => 'pct', 'cellMargin' => 0]);
+    $kopTable->addRow();
+
+    // Logo Kiri
+    $cellKiri = $kopTable->addCell(2200, ['valign' => 'center']);
+    if (file_exists($logoPemerintah)) {
+        $cellKiri->addImage($logoPemerintah, ['width' => 75, 'height' => 75]);
     }
 
-    $headerSection->addText('PEMERINTAH KOTA BONTANG', [
-        'bold' => true, 'size' => 14, 'alignment' => 'center', 'spacing' => 0
-    ]);
-    $headerSection->addText('DINAS KOMUNIKASI DAN INFORMATIKA', [
-        'bold' => true, 'size' => 13, 'alignment' => 'center', 'spacing' => 0
-    ]);
-    $headerSection->addText('Jl. Brigjen Katamso No. 1, Bontang Utara, Kota Bontang, Kalimantan Timur', [
-        'size' => 10, 'alignment' => 'center', 'spacing' => 0
-    ]);
-    $headerSection->addText('Telp: (0548) 22222 | Website: kominfo.bontangkota.go.id', [
-        'size' => 10, 'alignment' => 'center', 'spacing' => 100
-    ]);
+    // Tengah
+    $cellTengah = $kopTable->addCell(6100, ['valign' => 'center']);
+    $cellTengah->addText('PEMERINTAH KOTA BONTANG', $f15b, ['alignment' => 'center', 'spaceAfter' => 0]);
+    $cellTengah->addText('DINAS KOMUNIKASI DAN INFORMATIKA', $f13b, ['alignment' => 'center', 'spaceAfter' => 60]);
+    $cellTengah->addText('Jl. Brigjen Katamso No. 1, Bontang Utara, Kota Bontang, Kalimantan Timur', $f9, ['alignment' => 'center', 'spaceAfter' => 0]);
+    $cellTengah->addText('Telp: (0548) 22222 | Website: kominfo.bontangkota.go.id', $f9, ['alignment' => 'center', 'spaceAfter' => 0]);
 
-    // Garis pembatas
-    $headerSection->addText('________________________________________', [
-        'alignment' => 'center', 'size' => 10, 'spacing' => 200
-    ]);
+    // Logo Kanan
+    $cellKanan = $kopTable->addCell(2200, ['valign' => 'center']);
+    if (file_exists($logoKominfo)) {
+        $cellKanan->addImage($logoKominfo, ['width' => 75, 'height' => 75]);
+    }
 
-    // ======= JUDUL =======
-    $headerSection->addText('BUKTI PENERIMAAN LAYANAN', [
-        'bold' => true, 'size' => 13, 'alignment' => 'center', 'spacing' => 300,
-        'underline' => 'single'
-    ]);
-    $headerSection->addText('Nomor: ' . $ticket->id . '/KOMINFO/' . date('m/Y', strtotime($ticket->created_at)), [
-        'size' => 11, 'alignment' => 'center', 'spacing' => 100
-    ]);
+    // Garis Kop Surat (Diubah menjadi 1 garis tebal sedang)
+    $section->addText('', $f12, ['borderBottomSize' => 12, 'borderBottomColor' => '000000', 'spaceAfter' => 200]);
 
-    // ======= ISI =======
-    $headerSection->addText('Yang bertanda tangan di bawah ini, Kepala Dinas Komunikasi dan Informatika Kota Bontang, menerangkan bahwa telah menerima permohonan layanan dari:', [
-        'alignment' => 'both', 'spacing' => 200, 'indentation' => 720
-    ]);
+    // ========== JUDUL ==========
+    $section->addText('BUKTI PENERIMAAN LAYANAN', $f14bu, ['alignment' => 'center', 'spaceAfter' => 80]);
+    $nomorSurat = $ticket->id . '/KOMINFO/' . date('m/Y', strtotime($ticket->created_at));
+    $section->addText('Nomor: ' . $nomorSurat, $f10, ['alignment' => 'center', 'spaceAfter' => 200]);
 
-    // Tabel data
-    $tableData = [
-        ['Nama Pemohon', ': ' . ($ticket->requester->name ?? 'N/A')],
-        ['Email / OPD', ': ' . ($ticket->requester->email ?? '-')],
-        ['Jenis Layanan', ': ' . ($ticket->service->name ?? 'N/A')],
-        ['Hari / Tanggal', ': ' . \Carbon\Carbon::parse($ticket->created_at)->translatedFormat('l, d F Y')],
-    ];
+    // ========== PEMBUKA ==========
+    $section->addText(
+        'Yang bertanda tangan di bawah ini, Kepala Dinas Komunikasi dan Informatika Kota Bontang dengan ini menerangkan bahwa telah menerima permohonan layanan dari:',
+        $f12,
+        ['alignment' => 'both', 'spaceAfter' => 150, 'indentation' => ['left' => 720]]
+    );
+
+    // ========== DATA ==========
+    $dataTable = $section->addTable(['width' => 100, 'unit' => 'pct', 'cellMargin' => 50, 'indentation' => ['left' => 580]]);
+
+    $addRow($dataTable, 'Nama Pemohon', $ticket->requester->name ?? 'N/A');
+    $addRow($dataTable, 'Email / OPD', $ticket->requester->email ?? '-');
+    $addRow($dataTable, 'Jenis Layanan', $ticket->service->name ?? 'N/A');
+    
+    // Tanggal (Bahasa Indonesia menggunakan isoFormat)
+    $tanggalPermohonan = \Carbon\Carbon::parse($ticket->created_at)->locale('id')->isoFormat('dddd, D MMMM Y');
+    $addRow($dataTable, 'Hari / Tanggal', $tanggalPermohonan);
 
     if ($ticket->schedule_start) {
-        $tableData[] = [
-            'Jadwal Layanan', 
-            ': ' . \Carbon\Carbon::parse($ticket->schedule_start)->format('d F Y H:i') . ' s.d ' . \Carbon\Carbon::parse($ticket->schedule_end)->format('d F Y H:i')
-        ];
+        $jadwalMulai = \Carbon\Carbon::parse($ticket->schedule_start)->locale('id')->isoFormat('D MMMM Y, H:i');
+        $jadwalSelesai = \Carbon\Carbon::parse($ticket->schedule_end)->format('H:i');
+        $jadwal = $jadwalMulai . ' s.d ' . $jadwalSelesai . ' WITA';
+        $addRow($dataTable, 'Jadwal Layanan', $jadwal);
     }
 
-    $tableData[] = ['Pelaksana Staf', ': ' . ($ticket->staff->name ?? 'Belum Ditugaskan')];
+    $addRow($dataTable, 'Pelaksana Staf', $ticket->staff->name ?? 'Belum Ditugaskan');
+    $addRow($dataTable, 'Status', strtoupper($ticket->status));
 
-    foreach ($tableData as $row) {
-        $table = $headerSection->addTable([
-            'width' => 100,
+    $section->addText('', $f12, ['spaceAfter' => 150]);
+
+    // ========== DETAIL ==========
+    $section->addText(
+        'Adapun keterangan detail permohonan yang diajukan adalah sebagai berikut:',
+        $f12,
+        ['spaceAfter' => 80, 'indentation' => ['left' => 580]]
+    );
+
+    if ($ticket->form_data && count($ticket->form_data) > 0) {
+        $detailTable = $section->addTable([
+            'borderSize' => 6,
+            'borderColor' => '000000',
+            'width' => 95,
             'unit' => 'pct',
-            'indentation' => 720,
+            'cellMargin' => 80,
+            'indentation' => ['left' => 580]
         ]);
-        $table->addRow();
-        $table->addCell(3500)->addText($row[0], ['bold' => true]);
-        $table->addCell(6500)->addText($row[1]);
-    }
 
-    // Detail form_data
-    $headerSection->addText('', ['spacing' => 200]);
-    $headerSection->addText('Detail permohonan yang diajukan:', [
-        'spacing' => 100, 'indentation' => 720
-    ]);
-
-    if ($ticket->form_data) {
         foreach ($ticket->form_data as $key => $value) {
+            if ($key === 'wa') continue;
+
             $label = ucfirst(str_replace('_', ' ', $key));
             $val = is_array($value) ? implode(', ', $value) : $value;
-            $headerSection->addText('• ' . $label . ': ' . $val, [
-                'indentation' => 1080, 'spacing' => 50
-            ]);
+
+            $detailTable->addRow();
+            $detailTable->addCell(4000, ['bgColor' => 'F5F5F5', 'valign' => 'center'])->addText($label, $f12b);
+            $detailTable->addCell(6000, ['valign' => 'center'])->addText($val, $f12);
         }
     }
 
-    $headerSection->addText('', ['spacing' => 200]);
-    $headerSection->addText('Surat bukti ini dibuat secara otomatis oleh sistem untuk dapat dipergunakan sebagaimana mestinya.', [
-        'alignment' => 'both', 'spacing' => 100, 'indentation' => 720
-    ]);
+    $section->addText('', $f12, ['spaceAfter' => 100]);
 
-    // ======= TANDA TANGAN =======
-    $headerSection->addText('', ['spacing' => 400]);
-    $ttdTable = $headerSection->addTable([
-        'width' => 40,
-        'unit' => 'pct',
-        'alignment' => 'right',
-    ]);
+    // ========== PENUTUP ==========
+    $section->addText(
+        'Surat bukti ini dibuat secara otomatis oleh sistem SIKOMA Dinas Komunikasi dan Informatika Kota Bontang untuk dapat dipergunakan sebagaimana mestinya.',
+        $f12,
+        ['alignment' => 'both', 'spaceAfter' => 250, 'indentation' => ['left' => 720]]
+    );
+
+    // ========== TTD ==========
+    $ttdTable = $section->addTable(['width' => 100, 'unit' => 'pct', 'cellMargin' => 100]);
     $ttdTable->addRow();
-    $ttdCell = $ttdTable->addCell(4000);
-    $ttdCell->addText('Bontang, ' . \Carbon\Carbon::now()->translatedFormat('d F Y'), ['alignment' => 'center']);
-    $ttdCell->addText('Kepala Dinas Kominfo,', ['alignment' => 'center']);
-    $ttdCell->addText('', ['spacing' => 800]);
-    $ttdCell->addText('________________________', ['alignment' => 'center']);
-    $ttdCell->addText('NIP. ................................', ['alignment' => 'center', 'size' => 10]);
 
-    // Simpan
+    $tanggalSurat = \Carbon\Carbon::now()->locale('id')->isoFormat('D MMMM Y');
+
+    // Staff
+    $s = $ttdTable->addCell(5000, ['valign' => 'top']);
+    $s->addText('Bontang, ' . $tanggalSurat, $f10, ['alignment' => 'center', 'spaceAfter' => 0]);
+    $s->addText('Pelaksana Layanan,', $f10, ['alignment' => 'center', 'spaceAfter' => 0]);
+    $s->addText('', $f12, ['spaceAfter' => 900]);
+    $s->addText('________________________', $f10, ['alignment' => 'center', 'spaceAfter' => 20]);
+    $s->addText($ticket->staff->name ?? 'Belum Ditugaskan', $f12b, ['alignment' => 'center', 'spaceAfter' => 0]);
+    $s->addText('NIP. ' . ($ticket->staff->nip ?? '................................'), $f10, ['alignment' => 'center', 'spaceAfter' => 0]);
+
+    // Kadis
+    $k = $ttdTable->addCell(5000, ['valign' => 'top']);
+    $k->addText('Bontang, ' . $tanggalSurat, $f10, ['alignment' => 'center', 'spaceAfter' => 0]);
+    $k->addText('Kepala Dinas Kominfo,', $f10, ['alignment' => 'center', 'spaceAfter' => 0]);
+    $k->addText('', $f12, ['spaceAfter' => 900]);
+    $k->addText('________________________', $f10, ['alignment' => 'center', 'spaceAfter' => 20]);
+    $k->addText('________________________', $f12b, ['alignment' => 'center', 'spaceAfter' => 0]);
+    $k->addText('NIP. ................................', $f10, ['alignment' => 'center', 'spaceAfter' => 0]);
+
+    // ========== DOWNLOAD ==========
     $fileName = 'Bukti_Layanan_Ticket_' . $ticket->ticket_number . '.docx';
-    $tempFilePath = storage_path($fileName);
+    $tempFilePath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $fileName;
+
     $phpWord->save($tempFilePath, 'Word2007');
 
     return response()->download($tempFilePath)->deleteFileAfterSend(true);
 }
 
-    public function getResubmitData($id)
+    public function exportExcelBukti($id)
     {
-        $user = Auth::user();
-        $ticket = Ticket::find($id);
+    $ticket = Ticket::with(['service', 'staff', 'requester'])->find($id);
+    if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
 
-        if (!$ticket) {
-            return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
-        }
-
-        if ($ticket->user_id !== $user->id) {
-            return response()->json(['message' => 'Akses ditolak. Hanya pemohon yang bisa mengajukan ulang.'], 403);
-        }
-
-        return response()->json([
-            'service_id' => $ticket->service_id,
-            'form_data' => $ticket->form_data
-        ]);
+    return Excel::download(new \App\Exports\BuktiLayananExport($ticket), 'Bukti_Layanan_Ticket_' . $ticket->ticket_number . '.xlsx');
     }
+
+    /**
+ * Preview file dengan Content-Disposition: inline
+ * Untuk digunakan di iframe agar tidak force download
+ */
+public function previewFile($path)
+{
+    // Decode path karena bisa ada slash
+    $path = urldecode($path);
+    
+    // Validasi path agar tidak bisa akses sembarangan
+    $allowedPrefixes = ['surat_permohonan/', 'lampiran_tambahan/'];
+    $isValidPath = false;
+    
+    foreach ($allowedPrefixes as $prefix) {
+        if (str_starts_with($path, $prefix)) {
+            $isValidPath = true;
+            break;
+        }
+    }
+    
+    if (!$isValidPath) {
+        return response()->json(['message' => 'Akses file ditolak'], 403);
+    }
+    
+    // Cek file ada atau tidak
+    if (!\Illuminate\Support\Facades\Storage::disk('public')->exists($path)) {
+        return response()->json(['message' => 'File tidak ditemukan'], 404);
+    }
+    
+    // Ambil mime type
+    $mimeType = \Illuminate\Support\Facades\Storage::disk('public')->mimeType($path);
+    $fileContent = \Illuminate\Support\Facades\Storage::disk('public')->get($path);
+    
+    // List mime type yang boleh inline
+    $inlineMimes = [
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'application/pdf',
+    ];
+    
+    // Tentukan Content-Disposition
+    $disposition = in_array($mimeType, $inlineMimes) ? 'inline' : 'attachment';
+    
+    return response($fileContent)
+        ->header('Content-Type', $mimeType)
+        ->header('Content-Disposition', $disposition . '; filename="' . basename($path) . '"')
+        ->header('Cache-Control', 'private, max-age=3600');
+}
 }
