@@ -7,9 +7,7 @@ return [
     | Cross-Origin Resource Sharing (CORS) Configuration
     |--------------------------------------------------------------------------
     |
-    | Here you mengkonfigurasi pengaturan untuk pembagian lintas sumber lintas lintas lintas
-    |
-    | To learn more: https:// developer.mozilla.org/en-US/docs/Web/HTTP/CORS
+    | Di sini Anda dapat mengkonfigurasi pengaturan CORS untuk aplikasi Anda.
     |
     */
 
@@ -25,9 +23,8 @@ return [
 
     'exposed_headers' => [],
 
-    'max_age' => 0, // <--- Ganti koma dengan koma 0,
+    'max_age' => 0,
 
-    'supports_credentials' => false,
+    'supports_credentials' => true,
 
-    // <--- Pastikan ada koma di akhir (0, (Comma)
 ];

@@ -10,18 +10,25 @@ use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
+    // ✅ FIX: Dashboard dengan rekap_tugas yang benar
     public function index()
     {
         try {
             $totalTickets = Ticket::count();
             $completedTickets = Ticket::where('status', 'completed')->count();
-            $pendingTickets = Ticket::whereIn('status', ['pending_approval', 'pending', 'queued'])->count();
+            
+            // Status aktif = belum selesai, ditolak, dibatalkan
+            $activeStatuses = ['pending', 'queued', 'approved_admin', 'assigned', 'in_progress', 'needs_reschedule'];
+            $pendingTickets = Ticket::whereIn('status', $activeStatuses)->count();
 
+            // ✅ FIX: Gunakan lowercase dan filter status aktif
             $rekapTugas = Ticket::select('services.category', DB::raw('count(*) as total'))
                 ->join('services', 'tickets.service_id', '=', 'services.id')
-                ->whereIn('services.category', ['IT', 'Zoom', 'Command Center'])
+                ->whereIn('services.category', ['it', 'zoom', 'command_center'])
+                ->whereIn('tickets.status', $activeStatuses)
                 ->groupBy('services.category')
-                ->pluck('total', 'category')->toArray();
+                ->pluck('total', 'category')
+                ->toArray();
 
             $staffData = User::where('role', 'staff')->get()->map(function ($staff) {
                 return [
@@ -44,15 +51,122 @@ class DashboardController extends Controller
                     'pending' => $pendingTickets,
                 ],
                 'rekap_tugas' => [
-                    'it' => $rekapTugas['IT'] ?? 0,
-                    'zoom' => $rekapTugas['Zoom'] ?? 0,
-                    'command_center' => $rekapTugas['Command Center'] ?? 0,
+                    'it' => $rekapTugas['it'] ?? 0,
+                    'zoom' => $rekapTugas['zoom'] ?? 0,
+                    'command_center' => $rekapTugas['command_center'] ?? 0,
                 ],
                 'staff' => $staffData
             ]);
 
         } catch (\Exception $e) {
             return response()->json(['message' => 'Gagal mengambil data dashboard', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    // ✅ BARU: Endpoint khusus monitoring semua tiket untuk Pimpinan
+    public function getAllTickets(Request $request)
+    {
+        try {
+            $query = Ticket::with(['service', 'staff', 'requester']);
+
+            // Filter status jika ada parameter
+            if ($request->filled('status')) {
+                $query->where('status', $request->status);
+            }
+
+            // Filter layanan jika ada parameter
+            if ($request->filled('service_id')) {
+                $query->where('service_id', $request->service_id);
+            }
+
+            // Filter kategori jika ada parameter
+            if ($request->filled('category')) {
+                $query->whereHas('service', function ($q) use ($request) {
+                    $q->where('category', strtolower($request->category));
+                });
+            }
+
+            // Filter tanggal jika ada parameter
+            if ($request->filled('start_date') && $request->filled('end_date')) {
+                $query->whereBetween('created_at', [
+                    $request->start_date . ' 00:00:00',
+                    $request->end_date . ' 23:59:59'
+                ]);
+            }
+
+            // Search jika ada parameter
+            if ($request->filled('search')) {
+                $search = $request->search;
+                $query->where(function ($q) use ($search) {
+                    $q->whereHas('requester', function ($q2) use ($search) {
+                        $q2->where('name', 'ILIKE', "%{$search}%");
+                    })
+                    ->orWhereHas('service', function ($q2) use ($search) {
+                        $q2->where('name', 'ILIKE', "%{$search}%");
+                    })
+                    ->orWhere('ticket_number', (int)$search);
+                });
+            }
+
+            // Sort
+            $sortBy = $request->filled('sort_by') ? $request->sort_by : 'created_at';
+            $sortDir = $request->filled('sort_dir') ? $request->sort_dir : 'desc';
+            $query->orderBy($sortBy, $sortDir);
+
+            // Pagination
+            $perPage = $request->filled('per_page') ? (int)$request->per_page : 100;
+            $tickets = $query->paginate($perPage);
+
+            // Format response sesuai ekspektasi FE
+            $formatted = $tickets->map(function ($ticket) {
+                // Hitung remaining_days
+                $remainingDays = null;
+                if ($ticket->due_date) {
+                    $remainingDays = now()->diffInDays($ticket->due_date, false);
+                }
+
+                return [
+                    'id' => $ticket->id,
+                    'ticket_number' => $ticket->ticket_number,
+                    'status' => $ticket->status,
+                    'service_id' => $ticket->service_id,
+                    'service' => [
+                        'id' => $ticket->service->id,
+                        'name' => $ticket->service->name,
+                        'slug' => $ticket->service->slug ?? null,
+                        'category' => $ticket->service->category ?? null,
+                    ],
+                    'staff' => $ticket->staff ? [
+                        'id' => $ticket->staff->id,
+                        'name' => $ticket->staff->name,
+                    ] : null,
+                    'requester' => [
+                        'id' => $ticket->requester->id,
+                        'name' => $ticket->requester->name,
+                    ],
+                    'form_data' => $ticket->form_data,
+                    'due_date' => $ticket->due_date ? $ticket->due_date->toDateTimeString() : null,
+                    'remaining_days' => $remainingDays,
+                    'schedule_start' => $ticket->schedule_start ? $ticket->schedule_start->toDateTimeString() : null,
+                    'schedule_end' => $ticket->schedule_end ? $ticket->schedule_end->toDateTimeString() : null,
+                    'created_at' => $ticket->created_at->toDateTimeString(),
+                    'completed_at' => $ticket->completed_at ? $ticket->completed_at->toDateTimeString() : null,
+                ];
+            });
+
+            return response()->json([
+                'data' => $formatted,
+                'current_page' => $tickets->currentPage(),
+                'last_page' => $tickets->lastPage(),
+                'total' => $tickets->total(),
+                'per_page' => $tickets->perPage(),
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Gagal mengambil data tiket',
+                'error' => $e->getMessage()
+            ], 500);
         }
     }
 
@@ -75,7 +189,6 @@ class DashboardController extends Controller
             ->orderBy('created_at', 'asc')
             ->get();
 
-        // ✅ LOGIC OVERDUE UNTUK TABEL AKTIF
         $formatted = $tickets->map(function ($ticket) use ($now) {
             $isOverdueSchedule = false;
             $overdueMinutes = null;
@@ -108,19 +221,17 @@ class DashboardController extends Controller
         return response()->json($formatted);
     }
 
-        public function getExpiredDispositions()
+    public function getExpiredDispositions()
     {
         $now = \Carbon\Carbon::now('Asia/Makassar');
 
-        // ✅ AMBIL TIKET YANG SUDAH MELEWATI JAM SELESAI DAN BELUM DI-DISPOSE
         $tickets = Ticket::with(['service', 'requester'])
             ->whereNull('assigned_staff_id')
-            ->whereNotNull('schedule_end') // Pastikan ini layanan yang punya jam selesai (Zoom/CC)
-            ->where('schedule_end', '<=', $now) // Jam selesai sudah lewat
-            ->orderBy('created_at', 'desc') // Yang paling baru di atas
+            ->whereNotNull('schedule_end')
+            ->where('schedule_end', '<=', $now)
+            ->orderBy('created_at', 'desc')
             ->get();
 
-        // Tidak perlu flag overdue, karena statusnya sudah pasti expired
         $formatted = $tickets->map(function ($ticket) {
             return [
                 'id' => $ticket->id,
@@ -130,7 +241,7 @@ class DashboardController extends Controller
                 'form_data' => $ticket->form_data,
                 'schedule_start' => $ticket->schedule_start,
                 'schedule_end' => $ticket->schedule_end,
-                'status' => 'expired', // Hardcode status untuk frontend
+                'status' => 'expired',
                 'created_at' => $ticket->created_at,
             ];
         });
@@ -156,8 +267,6 @@ class DashboardController extends Controller
             $isAbsent = in_array($status, ['cuti', 'sakit', 'izin', 'berhalangan hadir']);
             $displayStatus = $staff->attendance_status;
             
-            // ✅ FIX KESENJANGAN: Cek ke tabel leaves jika status di user masih "Masuk"
-            // Ini untuk mengantisipasi kalau Admin belum klik Approve
             if (!$isAbsent) {
                 $activeLeave = \App\Models\Leave::where('user_id', $staff->id)
                     ->whereIn('status', ['pending', 'active'])
@@ -167,7 +276,7 @@ class DashboardController extends Controller
 
                 if ($activeLeave) {
                     $isAbsent = true;
-                    $displayStatus = $activeLeave->type; // Ambil status sebenarnya (Cuti/Sakit/Izin)
+                    $displayStatus = $activeLeave->type;
                 }
             }
             
@@ -179,7 +288,7 @@ class DashboardController extends Controller
                 'bidang' => $staff->bidang ?? '-',
                 'attendance_status' => $displayStatus,
                 'active_task_count' => $staff->active_task_count ?? 0,
-                'is_overloaded' => $staff->is_overloaded, // ✅ TAMBAHKAN INI (FLAG UNTUK FE)
+                'is_overloaded' => $staff->is_overloaded,
                 'is_available' => !$isAbsent, 
                 'is_absent' => $isAbsent,
                 'absent_reason' => $isAbsent ? "Sedang {$displayStatus}" : null
@@ -189,7 +298,6 @@ class DashboardController extends Controller
         return response()->json($formatted);
     }
 
-    // ✅ UPDATE: Log & Notif Dinamis
     public function assignStaff(Request $request, $ticket_id)
     {
         $request->validate(['staff_id' => 'required|exists:users,id']);
@@ -199,7 +307,6 @@ class DashboardController extends Controller
 
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
         
-        // ✅ PROTEKSI 1: Cek attendance_status di tabel users (case-insensitive)
         $status = strtolower(trim($staff->attendance_status ?? ''));
         if (in_array($status, ['cuti', 'sakit', 'izin', 'berhalangan hadir'])) {
             return response()->json([
@@ -207,7 +314,6 @@ class DashboardController extends Controller
             ], 422);
         }
 
-        // ✅ PROTEKSI 2: Cek langsung ke tabel leaves (Double Protection)
         $hasActiveLeave = \App\Models\Leave::where('user_id', $staff->id)
             ->whereIn('status', ['pending', 'active'])
             ->whereDate('start_date', '<=', now()->toDateString())
@@ -224,7 +330,6 @@ class DashboardController extends Controller
         $ticket->status = 'assigned';
         $ticket->save();
 
-        // ✅ CATAT LOG AUDIT JIKA INI DISPOSISI TERLAMBAT (ZOOM / COMMAND CENTER)
         if (in_array(strtolower($ticket->service->category ?? ''), ['zoom', 'command_center']) && $ticket->schedule_start) {
             if (now()->gt($ticket->schedule_start)) {
                 $telatMenit = now()->diffInMinutes($ticket->schedule_start);
@@ -249,7 +354,6 @@ class DashboardController extends Controller
             'created_at' => now(),
         ]);
 
-        // ✅ Kirim ke Grup Staff (Otomatis ke TELEGRAM_CHAT_ID di .env)
         \App\Jobs\SendTelegramJob::dispatch(
             "📋 *DISPOSISI TIKET BARU*\n━━━━━━━━━━━━━━━━━━━\nTicket: #{$ticket->ticket_number}\nLayanan: {$ticket->service->name}\nDitunjuk oleh: *{$disposerName} ({$roleLabel})*\nDitugaskan ke: *{$staff->name}*\n━━━━━━━━━━━━━━━━━━━\n_Silakan cek aplikasi untuk memproses._"
         );
@@ -274,7 +378,6 @@ class DashboardController extends Controller
             return response()->json(['message' => 'Alasan penolakan wajib diisi.'], 422);
         }
 
-        // ✅ FIX: Lepaskan kunci Zoom Link jika tiket ditolak pimpinan
         if ($ticket->zoom_link_id) {
             \App\Models\ZoomLink::where('id', $ticket->zoom_link_id)->update([
                 'status' => 'available', 

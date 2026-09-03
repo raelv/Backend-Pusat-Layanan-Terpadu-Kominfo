@@ -101,7 +101,7 @@ class ReportController extends Controller
         $data = $tickets->map(function ($ticket) {
             return [
                 'id' => $ticket->id,
-                'ticket_number' => 'Ticket #' . $ticket->ticket_number,
+                'ticket_number' => 'Tiket #' . $ticket->ticket_number,
                 'service_name' => $ticket->service->name ?? null,
                 'category' => $ticket->service->category ?? null,
                 'requester_name' => $ticket->requester->name ?? null,

@@ -400,138 +400,169 @@ if (isset($formData['wa'])) {
         });
     }
 
-    public function update(Request $request, $id)
-    {
-        $user = Auth::user();
-        $ticket = Ticket::find($id);
+public function update(Request $request, $id)
+{
+    $user = Auth::user();
+    $ticket = Ticket::find($id);
 
-        if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
-        if ($ticket->user_id !== $user->id) return response()->json(['message' => 'Hanya pemohon yang bisa mengubah permohonan ini.'], 403);
-        if ($ticket->status === 'cancelled') return response()->json(['message' => 'Tiket yang sudah dibatalkan tidak dapat diubah.'], 403);
-        
-        if (!in_array($ticket->status, ['pending', 'queued', 'needs_reschedule', 'expired'])) {
-            return response()->json(['message' => 'Tiket sudah diproses. Perubahan hanya bisa dilakukan melalui ruang diskusi.'], 403);
-        }
-
-        $request->validate([
-            'form_data' => 'required', 
-            'schedule_start' => 'nullable|date',
-            'schedule_end' => 'nullable|date|after:schedule_start',
-            'surat_permohonan' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
-            'lampiran_tambahan' => 'nullable|file|mimes:pdf,jpg,jpeg,png,docx,xlsx,zip|max:10240',
-        ]);
-
-        $formData = $request->form_data;
-        if (is_string($formData)) $formData = json_decode($formData, true);
-
-        // ✅ VALIDASI NAMA LENGKAP
-if (isset($formData['nama'])) {
-    $nama = trim($formData['nama']);
-    
-    if (!preg_match('/^[a-zA-Z\s.\-,\']+$/', $nama)) {
-        return response()->json([
-            'message' => 'Nama Lengkap tidak valid. Hanya boleh berisi huruf, spasi, dan tanda baca gelar (titik, koma, tanda hubung). Angka dan simbol tidak diperbolehkan.'
-        ], 422);
+    if (!$ticket) {
+        return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
     }
-    
-    if (empty($nama)) {
-        return response()->json([
-            'message' => 'Nama Lengkap wajib diisi.'
-        ], 422);
+
+    if ($ticket->user_id !== $user->id) {
+        return response()->json(['message' => 'Hanya pemohon yang bisa mengubah permohonan ini.'], 403);
     }
+
+    if ($ticket->status === 'cancelled') {
+        return response()->json(['message' => 'Tiket yang sudah dibatalkan tidak dapat diubah.'], 403);
+    }
+
+    // ✅ VALIDASI STATUS DENGAN PESAN SPESIFIK
+    $editableStatuses = ['pending', 'queued', 'needs_reschedule', 'expired'];
     
-    $formData['nama'] = $nama;
-}
-
-        // ✅ VALIDASI JUMLAH PESERTA COMMAND CENTER
-        $currentService = \App\Models\Service::find($ticket->service_id);
-        if ($currentService && strtolower($currentService->category) === 'command_center') {
-            $jumlahPeserta = isset($formData['jumlah_peserta']) ? (int)$formData['jumlah_peserta'] : null;
-            
-            if (is_null($jumlahPeserta)) {
-                return response()->json([
-                    'message' => 'Jumlah peserta wajib diisi untuk layanan Command Center.'
-                ], 422);
-            }
-
-            if ($jumlahPeserta < 3 || $jumlahPeserta > 50) {
-                return response()->json([
-                    'message' => 'Jumlah peserta tidak boleh kurang dari 3 dan tidak boleh melebihi 50 orang (kapasitas maksimal Command Center).'
-                ], 422);
-            }
-        }
-
-        // ✅ TAMBAHKAN INI
-if (isset($formData['wa'])) {
-    $wa = preg_replace('/\s+/', '', $formData['wa']);
-    
-    try {
-        $phone = new \Propaganistas\LaravelPhone\PhoneNumber($wa, 'ID');
+    if (!in_array($ticket->status, $editableStatuses)) {
+        $pesan = match($ticket->status) {
+            'assigned' => 'Formulir layanan tidak dapat diubah karena sudah ditunjuk ke staf pelaksana.',
+            'approved_admin' => 'Formulir layanan tidak dapat diubah karena sedang dalam proses persetujuan.',
+            'in_progress' => 'Formulir layanan tidak dapat diubah karena sedang dalam proses pengerjaan oleh staf.',
+            'completed' => 'Formulir layanan tidak dapat diubah karena layanan sudah selesai.',
+            'rejected' => 'Formulir layanan tidak dapat diubah karena permohonan telah ditolak.',
+            default => 'Tiket sudah diproses. Perubahan hanya bisa dilakukan melalui ruang diskusi.',
+        };
         
-        if (!$phone->isValid()) {
+        return response()->json([
+            'message' => $pesan,
+            'current_status' => $ticket->status
+        ], 403);
+    }
+
+    // ✅ VALIDASI INPUT DASAR (Di luar transaction)
+    $request->validate([
+        'form_data' => 'required', 
+        'schedule_start' => 'nullable|date',
+        'schedule_end' => 'nullable|date|after:schedule_start',
+        'surat_permohonan' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
+        'lampiran_tambahan' => 'nullable|file|mimes:pdf,jpg,jpeg,png,docx,xlsx,zip|max:10240',
+    ]);
+
+    $formData = $request->form_data;
+    if (is_string($formData)) $formData = json_decode($formData, true);
+
+    // ✅ VALIDASI NAMA LENGKAP
+    if (isset($formData['nama'])) {
+        $nama = trim($formData['nama']);
+        
+        if (!preg_match('/^[a-zA-Z\s.\-,\']+$/', $nama)) {
             return response()->json([
-                'message' => 'Nomor WhatsApp tidak valid. Gunakan nomor Indonesia yang valid.'
+                'message' => 'Nama Lengkap tidak valid. Hanya boleh berisi huruf, spasi, dan tanda baca gelar (titik, koma, tanda hubung). Angka dan simbol tidak diperbolehkan.'
             ], 422);
         }
         
-        $formData['wa'] = $phone->formatE164();
+        if (empty($nama)) {
+            return response()->json([
+                'message' => 'Nama Lengkap wajib diisi.'
+            ], 422);
+        }
         
-    } catch (\Exception $e) {
-        return response()->json([
-            'message' => 'Format nomor WhatsApp tidak dikenali.'
-        ], 422);
+        $formData['nama'] = $nama;
     }
-}
 
-        if ($request->hasFile('surat_permohonan')) {
-            if ($ticket->surat_permohonan_path) \Illuminate\Support\Facades\Storage::disk('public')->delete($ticket->surat_permohonan_path);
-            $ticket->surat_permohonan_path = $request->file('surat_permohonan')->store('surat_permohonan', 'public');
+    // ✅ VALIDASI JUMLAH PESERTA COMMAND CENTER
+    $currentService = \App\Models\Service::find($ticket->service_id);
+    if ($currentService && strtolower($currentService->category) === 'command_center') {
+        $jumlahPeserta = isset($formData['jumlah_peserta']) ? (int)$formData['jumlah_peserta'] : null;
+        
+        if (is_null($jumlahPeserta)) {
+            return response()->json([
+                'message' => 'Jumlah peserta wajib diisi untuk layanan Command Center.'
+            ], 422);
         }
 
-        if ($request->hasFile('lampiran_tambahan')) {
-            if ($ticket->lampiran_tambahan_path) \Illuminate\Support\Facades\Storage::disk('public')->delete($ticket->lampiran_tambahan_path);
-            $ticket->lampiran_tambahan_path = $request->file('lampiran_tambahan')->store('lampiran_tambahan', 'public');
+        if ($jumlahPeserta < 3) {
+            return response()->json([
+                'message' => 'Jumlah peserta tidak boleh kurang dari 3 orang (kapasitas minimal Command Center).'
+            ], 422);
         }
 
-        $ticket->form_data = $formData;
-        if ($request->has('schedule_start')) $ticket->schedule_start = $request->schedule_start;
-        if ($request->has('schedule_end')) $ticket->schedule_end = $request->schedule_end;
+        if ($jumlahPeserta > 50) {
+            return response()->json([
+                'message' => 'Jumlah peserta tidak boleh melebihi 50 orang (kapasitas maksimal Command Center).'
+            ], 422);
+        }
+    }
 
-        if (($ticket->status === 'needs_reschedule' || $ticket->status === 'expired') && ($ticket->isDirty('schedule_start') || $ticket->isDirty('schedule_end'))) {
+    // ✅ VALIDASI WHATSAPP
+    if (isset($formData['wa'])) {
+        $wa = preg_replace('/\s+/', '', $formData['wa']);
+        
+        try {
+            $phone = new \Propaganistas\LaravelPhone\PhoneNumber($wa, 'ID');
             
-            $newStart = \Carbon\Carbon::parse($ticket->schedule_start, 'Asia/Makassar');
-            $newEnd = \Carbon\Carbon::parse($ticket->schedule_end, 'Asia/Makassar');
-
-            $isConflict = Ticket::where('id', '!=', $ticket->id)
-                ->whereHas('service', function ($q) {
-                    $q->whereIn('category', ['zoom', 'command_center']);
-                })
-                ->whereIn('status', ['assigned', 'in_progress', 'approved_admin'])
-                ->whereNotNull('schedule_start')
-                ->whereNotNull('schedule_end')
-                ->where(function ($query) use ($newStart, $newEnd) {
-                    $query->where('schedule_start', '<', $newEnd)
-                          ->where('schedule_end', '>', $newStart);
-                })->exists();
-
-            if ($isConflict) {
+            if (!$phone->isValid()) {
                 return response()->json([
-                    'message' => 'Gagal mengubah jadwal. Jadwal baru yang kamu pilih beririsan dengan layanan lain yang sudah terdaftar.'
+                    'message' => 'Nomor WhatsApp tidak valid. Gunakan nomor Indonesia yang valid.'
                 ], 422);
             }
-
-            $ticket->status = 'pending';
             
-            TicketLog::create([
-                'ticket_id' => $ticket->id, 'user_id' => auth()->id(),
-                'action' => 'RESCHEDULED', 'description' => 'OPD mengubah jadwal pelaksanaan dan tiket dikembalikan ke antrian.', 'created_at' => now(),
-            ]);
+            $formData['wa'] = $phone->formatE164();
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Format nomor WhatsApp tidak dikenali.'
+            ], 422);
+        }
+    }
+
+    // Upload file jika ada
+    if ($request->hasFile('surat_permohonan')) {
+        if ($ticket->surat_permohonan_path) \Illuminate\Support\Facades\Storage::disk('public')->delete($ticket->surat_permohonan_path);
+        $ticket->surat_permohonan_path = $request->file('surat_permohonan')->store('surat_permohonan', 'public');
+    }
+
+    if ($request->hasFile('lampiran_tambahan')) {
+        if ($ticket->lampiran_tambahan_path) \Illuminate\Support\Facades\Storage::disk('public')->delete($ticket->lampiran_tambahan_path);
+        $ticket->lampiran_tambahan_path = $request->file('lampiran_tambahan')->store('lampiran_tambahan', 'public');
+    }
+
+    $ticket->form_data = $formData;
+    if ($request->has('schedule_start')) $ticket->schedule_start = $request->schedule_start;
+    if ($request->has('schedule_end')) $ticket->schedule_end = $request->schedule_end;
+
+    // Validasi jadwal jika berubah
+    if (($ticket->status === 'needs_reschedule' || $ticket->status === 'expired') && ($ticket->isDirty('schedule_start') || $ticket->isDirty('schedule_end'))) {
+        
+        $newStart = \Carbon\Carbon::parse($ticket->schedule_start, 'Asia/Makassar');
+        $newEnd = \Carbon\Carbon::parse($ticket->schedule_end, 'Asia/Makassar');
+
+        $isConflict = Ticket::where('id', '!=', $ticket->id)
+            ->whereHas('service', function ($q) {
+                $q->whereIn('category', ['zoom', 'command_center']);
+            })
+            ->whereIn('status', ['assigned', 'in_progress', 'approved_admin'])
+            ->whereNotNull('schedule_start')
+            ->whereNotNull('schedule_end')
+            ->where(function ($query) use ($newStart, $newEnd) {
+                $query->where('schedule_start', '<', $newEnd)
+                      ->where('schedule_end', '>', $newStart);
+            })->exists();
+
+        if ($isConflict) {
+            return response()->json([
+                'message' => 'Gagal mengubah jadwal. Jadwal baru yang kamu pilih beririsan dengan layanan lain yang sudah terdaftar.'
+            ], 422);
         }
 
-        $ticket->save();
-        // ✅ FIX: Tambahkan zoomLink saat return
-        return response()->json(['message' => 'Permohonan berhasil diperbarui', 'data' => $ticket->load('zoomLink')]);
+        $ticket->status = 'pending';
+        
+        TicketLog::create([
+            'ticket_id' => $ticket->id, 'user_id' => auth()->id(),
+            'action' => 'RESCHEDULED', 'description' => 'OPD mengubah jadwal pelaksanaan dan tiket dikembalikan ke antrian.', 'created_at' => now(),
+        ]);
     }
+
+    $ticket->save();
+    return response()->json(['message' => 'Permohonan berhasil diperbarui', 'data' => $ticket->load('zoomLink')]);
+}
 
     public function updateStatus(Request $request, $detail_id)
     {

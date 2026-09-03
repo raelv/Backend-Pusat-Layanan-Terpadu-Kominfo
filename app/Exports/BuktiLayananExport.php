@@ -7,18 +7,25 @@ use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithStyles;
 use Maatwebsite\Excel\Concerns\WithColumnWidths;
+use Maatwebsite\Excel\Concerns\WithTitle;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 
-class BuktiLayananExport implements FromCollection, WithHeadings, WithStyles, WithColumnWidths
+class BuktiLayananExport implements FromCollection, WithHeadings, WithStyles, WithColumnWidths, WithTitle
 {
     protected $ticket;
 
     public function __construct(Ticket $ticket)
     {
         $this->ticket = $ticket;
+    }
+
+    // ✅ NAMA SHEET BAHASA INDONESIA
+    public function title(): string
+    {
+        return 'Bukti Layanan';
     }
 
     private function formatWa($wa)
@@ -30,44 +37,105 @@ class BuktiLayananExport implements FromCollection, WithHeadings, WithStyles, Wi
         return $wa;
     }
 
-public function collection()
-{
-    $ticket = $this->ticket;
-    $wa = $this->formatWa($ticket->form_data['wa'] ?? null);
-    
-    $rows = [
-        ['BUKTI PENERIMAAN LAYANAN', '', ''],
-        ['Nomor', '', $ticket->id . '/KOMINFO/' . date('m/Y', strtotime($ticket->created_at))],
-        ['', '', ''],
-        ['Nama Pemohon', '', $ticket->requester->name ?? 'N/A'],
-        ['Email / OPD', '', $ticket->requester->email ?? '-'],
-        ['Jenis Layanan', '', $ticket->service->name ?? 'N/A'],
-        ['Hari / Tanggal', '', \Carbon\Carbon::parse($ticket->created_at)->translatedFormat('l, d F Y')],
-    ];
-    
-    if ($ticket->schedule_start) {
-        $rows[] = ['Jadwal Layanan', '', \Carbon\Carbon::parse($ticket->schedule_start)->format('d F Y, H:i') . ' s.d ' . \Carbon\Carbon::parse($ticket->schedule_end)->format('H:i WITA')];
+    // ✅ NAMA HARI BAHASA INDONESIA
+    private function formatHariIndo($date)
+    {
+        $hari = [
+            'Sunday'    => 'Minggu',
+            'Monday'    => 'Senin',
+            'Tuesday'   => 'Selasa',
+            'Wednesday' => 'Rabu',
+            'Thursday'  => 'Kamis',
+            'Friday'    => 'Jumat',
+            'Saturday'  => 'Sabtu',
+        ];
+        
+        $hariEn = $date->format('l');
+        return $hari[$hariEn] ?? $hariEn;
     }
-    
-    $rows[] = ['Pelaksana Staf', '', $ticket->staff->name ?? 'Belum Ditugaskan'];
-    $rows[] = ['Status', '', strtoupper($ticket->status)];
-    $rows[] = ['', '', ''];
-    $rows[] = ['DETAIL PERMOHONAN', '', ''];
-    
-    if ($ticket->form_data && count($ticket->form_data) > 0) {
-        foreach ($ticket->form_data as $key => $value) {
-            if ($key === 'wa') continue;
-            $label = ucfirst(str_replace('_', ' ', $key));
-            $val = is_array($value) ? implode(', ', $value) : $value;
-            $rows[] = [$label, '', $val];
-        }
-    }
-    
-    $rows[] = ['', '', ''];
-    $rows[] = ['Nomor WhatsApp', '', $wa];
 
-    return collect($rows);
-}
+    // ✅ NAMA BULAN BAHASA INDONESIA
+    private function formatBulanIndo($date)
+    {
+        $bulan = [
+            'January'   => 'Januari',
+            'February'  => 'Februari',
+            'March'     => 'Maret',
+            'April'     => 'April',
+            'May'       => 'Mei',
+            'June'      => 'Juni',
+            'July'      => 'Juli',
+            'August'    => 'Agustus',
+            'September' => 'September',
+            'October'   => 'Oktober',
+            'November'  => 'November',
+            'December'  => 'Desember',
+        ];
+        
+        $bulanEn = $date->format('F');
+        return $bulan[$bulanEn] ?? $bulanEn;
+    }
+
+    // ✅ FORMAT TANGGAL LENGKAP INDONESIA
+    private function formatTanggalIndo($date)
+    {
+        $hari = $this->formatHariIndo($date);
+        $tanggal = $date->format('d');
+        $bulan = $this->formatBulanIndo($date);
+        $tahun = $date->format('Y');
+        
+        return "{$hari}, {$tanggal} {$bulan} {$tahun}";
+    }
+
+    public function collection()
+    {
+        $ticket = $this->ticket;
+        $wa = $this->formatWa($ticket->form_data['wa'] ?? null);
+        
+        $rows = [
+            ['BUKTI PENERIMAAN LAYANAN', '', ''],
+            ['Nomor', '', $ticket->id . '/KOMINFO/' . date('m/Y', strtotime($ticket->created_at))],
+            ['', '', ''],
+            ['Nama Pemohon', '', $ticket->requester->name ?? 'N/A'],
+            ['Email / OPD', '', $ticket->requester->email ?? '-'],
+            ['Jenis Layanan', '', $ticket->service->name ?? 'N/A'],
+            ['Hari / Tanggal', '', $this->formatTanggalIndo(\Carbon\Carbon::parse($ticket->created_at))],
+        ];
+        
+        if ($ticket->schedule_start) {
+            $mulai = $this->formatBulanIndo(\Carbon\Carbon::parse($ticket->schedule_start)) 
+                     ? \Carbon\Carbon::parse($ticket->schedule_start)->format('d F Y, H:i') 
+                     : \Carbon\Carbon::parse($ticket->schedule_start)->format('d/m/Y, H:i');
+            
+            // Replace nama bulan ke Indonesia
+            $mulai = str_replace(
+                ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+                ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'],
+                $mulai
+            );
+            
+            $rows[] = ['Jadwal Layanan', '', $mulai . ' s.d ' . \Carbon\Carbon::parse($ticket->schedule_end)->format('H:i') . ' WITA'];
+        }
+        
+        $rows[] = ['Pelaksana Staf', '', $ticket->staff->name ?? 'Belum Ditugaskan'];
+        $rows[] = ['Status', '', strtoupper($ticket->status)];
+        $rows[] = ['', '', ''];
+        $rows[] = ['DETAIL PERMOHONAN', '', ''];
+        
+        if ($ticket->form_data && count($ticket->form_data) > 0) {
+            foreach ($ticket->form_data as $key => $value) {
+                if ($key === 'wa') continue;
+                $label = ucfirst(str_replace('_', ' ', $key));
+                $val = is_array($value) ? implode(', ', $value) : $value;
+                $rows[] = [$label, '', $val];
+            }
+        }
+        
+        $rows[] = ['', '', ''];
+        $rows[] = ['Nomor WhatsApp', '', $wa];
+
+        return collect($rows);
+    }
 
     public function headings(): array
     {
@@ -97,7 +165,7 @@ public function collection()
             'alignment' => ['horizontal' => 'center'],
         ]);
 
-        // Header detail (baris "DETAIL PERMOHONAN")
+        // Styling per baris
         for ($i = 1; $i <= $sheet->getHighestRow(); $i++) {
             $val = $sheet->getCell('A' . $i)->getValue();
             

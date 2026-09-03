@@ -325,7 +325,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reports/export-pdf', [ReportController::class, 'exportCollectivePdf'])->middleware('throttle:10,1');
     Route::get('/reports/export-excel', [ReportController::class, 'exportCollectiveExcel'])->middleware('throttle:10,1');
 
-    // --- ROUTE PIMPINAN ---
+    // --- ROUTE PIMPINAN ---SS
     Route::prefix('pimpinan')->middleware('role:pimpinan,admin')->group(function () {
         Route::get('/dashboard', [App\Http\Controllers\Pimpinan\DashboardController::class, 'index']);
         Route::get('/leaves', [App\Http\Controllers\Pimpinan\DashboardController::class, 'getLeaves']);
@@ -334,6 +334,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/dispositions/staff/{service_id}', [App\Http\Controllers\Pimpinan\DashboardController::class, 'getAvailableStaffByService']);
         Route::post('/dispositions/assign/{ticket_id}', [App\Http\Controllers\Pimpinan\DashboardController::class, 'assignStaff'])->middleware('throttle:20,1');
         Route::post('/dispositions/reject/{ticket_id}', [App\Http\Controllers\Pimpinan\DashboardController::class, 'rejectTicket'])->middleware('throttle:20,1');
+        Route::get('/tickets', [App\Http\Controllers\Pimpinan\DashboardController::class, 'getAllTickets']);
     });
 
     // --- ROUTE STAFF ---
