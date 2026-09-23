@@ -21,7 +21,7 @@ class CheckOverdueScheduleCommand extends Command
         // ==========================================
         $lewatMulai = Ticket::with(['service', 'requester'])
             ->whereNull('assigned_staff_id')
-            ->whereNull('overdue_notified_at') // Cek flag ini
+            ->whereNull('overdue_notified_at') // cek flag ini
             ->whereHas('service', function ($q) {
                 $q->whereRaw("LOWER(category) IN ('zoom', 'command center')");
             })
@@ -53,7 +53,7 @@ class CheckOverdueScheduleCommand extends Command
         }
 
         // ==========================================
-        // 2. LOGIKA 2: LOG EXPIRED SAAT JAM SELESAI TERLEWAT (Pisah Query)
+        // 2. LOGIKA 2: LOG EXPIRED SAAT JAM SELESAI TERLEWAT (pisah query)
         // ==========================================
         $lewatSelesai = Ticket::with(['service'])
             ->whereNull('assigned_staff_id')

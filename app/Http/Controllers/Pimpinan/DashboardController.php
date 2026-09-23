@@ -30,19 +30,25 @@ class DashboardController extends Controller
                 ->pluck('total', 'category')
                 ->toArray();
 
-            $staffData = User::where('role', 'staff')->get()->map(function ($staff) {
-                return [
-                    'id' => $staff->id,
-                    'name' => $staff->name,
-                    'nip' => $staff->nip,
-                    'bidang' => $staff->bidang ?? '-',
-                    'bidangs' => $staff->bidangs ?? [],
-                    'attendance_status' => $staff->attendance_status,
-                    'active_task_count' => $staff->active_task_count,
-                    'is_overloaded' => $staff->is_overloaded, 
-                    'service_access' => $staff->service_access ?? []
-                ];
-            });
+            // ✅ FIX: Gunakan withCount untuk menghindari N+1 query
+            $staffData = User::where('role', 'staff')
+                ->withCount(['assignedTasks as active_task_count' => function ($query) {
+                    $query->whereIn('status', ['assigned', 'in_progress', 'approved_admin']);
+                }])
+                ->get()
+                ->map(function ($staff) {
+                    return [
+                        'id' => $staff->id,
+                        'name' => $staff->name,
+                        'nip' => $staff->nip,
+                        'bidang' => $staff->bidang ?? '-',
+                        'bidangs' => $staff->bidangs ?? [],
+                        'attendance_status' => $staff->attendance_status,
+                        'active_task_count' => $staff->active_task_count, // Ini sekarang dari withCount
+                        'is_overloaded' => $staff->active_task_count >= 2, // Hitung manual dari hasil withCount
+                        'service_access' => $staff->service_access ?? []
+                    ];
+                });
 
             return response()->json([
                 'stats' => [
@@ -258,8 +264,12 @@ class DashboardController extends Controller
 
         $category = strtolower($service->category); 
 
+        // ✅ FIX: Tambahkan withCount biar gak N+1 query
         $allStaff = \App\Models\User::where('role', 'staff')
             ->whereRaw("service_access @> ?", ['["' . $category . '"]'])
+            ->withCount(['assignedTasks as active_task_count' => function ($query) {
+                $query->whereIn('status', ['assigned', 'in_progress', 'approved_admin']);
+            }])
             ->get(['id', 'name', 'nip', 'bidang', 'attendance_status']);
 
         $formatted = $allStaff->map(function($staff) {
@@ -287,8 +297,8 @@ class DashboardController extends Controller
                 'nip' => $staff->nip,
                 'bidang' => $staff->bidang ?? '-',
                 'attendance_status' => $displayStatus,
-                'active_task_count' => $staff->active_task_count ?? 0,
-                'is_overloaded' => $staff->is_overloaded,
+                'active_task_count' => $staff->active_task_count, // Dari withCount
+                'is_overloaded' => $staff->active_task_count >= 2, // Hitung manual
                 'is_available' => !$isAbsent, 
                 'is_absent' => $isAbsent,
                 'absent_reason' => $isAbsent ? "Sedang {$displayStatus}" : null
@@ -364,51 +374,57 @@ class DashboardController extends Controller
         ]);
     }
 
-    public function rejectTicket(Request $request, $ticket_id)
-    {
-        $request->validate([
-            'reason' => 'required|string|max:500'
-        ]);
+public function rejectTicket(Request $request, $ticket_id)
+{
+    // ✅ FIX: Terima 'reason' atau 'rejection_reason', dan jadikan nullable
+    $request->validate([
+        'reason' => 'nullable|string|max:500',
+        'rejection_reason' => 'nullable|string|max:500' 
+    ]);
 
-        $ticket = \App\Models\Ticket::with(['service', 'requester'])->find($ticket_id);
-        
-        if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
+    $ticket = \App\Models\Ticket::with(['service', 'requester'])->find($ticket_id);
+    
+    if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
 
-        if (trim($request->reason) === '') {
-            return response()->json(['message' => 'Alasan penolakan wajib diisi.'], 422);
-        }
-
-        if ($ticket->zoom_link_id) {
-            \App\Models\ZoomLink::where('id', $ticket->zoom_link_id)->update([
-                'status' => 'available', 
-                'used_by_ticket_id' => null
-            ]);
-            $ticket->zoom_link_id = null;
-        }
-
-        $ticket->status = 'rejected';
-        $ticket->rejection_reason = trim($request->reason);
-        $ticket->save();
-
-        \App\Models\TicketLog::create([
-            'ticket_id' => $ticket->id, 
-            'user_id' => auth()->id(),
-            'action' => 'REJECTED_BY_LEADER', 
-            'description' => "Pimpinan menolak layanan. Alasan: {$request->reason}", 
-            'created_at' => now(),
-        ]);
-
-        $opdChatId = $ticket->requester->telegram_chat_id ?? null;
-        if ($opdChatId) {
-            \App\Jobs\SendTelegramJob::dispatch(
-                "❌ *Layanan Ditolak*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}\nLayanan: {$ticket->service->name}\nAlasan : {$request->reason}\n━━━━━━━━━━━━━━━━━━━\n_Silakan buat pengajuan baru jika sudah memperbaiki sesuai ketentuan._", 
-                $opdChatId
-            );
-        }
-
-        return response()->json([
-            'message' => 'Layanan berhasil ditolak.',
-            'data' => $ticket->load(['service', 'requester'])
-        ]);
+    // ✅ FIX: Ambil alasan dari salah satu key, jika kosong pakai teks default
+    $reason = trim($request->reason ?? $request->rejection_reason ?? '');
+    if ($reason === '') {
+        $reason = 'Ditolak oleh Pimpinan tanpa alasan spesifik.';
     }
+
+    // ... (kode seterusnya TETAP SAMA, cuma ganti $request->reason jadi $reason) ...
+
+    if ($ticket->zoom_link_id) {
+        \App\Models\ZoomLink::where('id', $ticket->zoom_link_id)->update([
+            'status' => 'available', 
+            'used_by_ticket_id' => null
+        ]);
+        $ticket->zoom_link_id = null;
+    }
+
+    $ticket->status = 'rejected';
+    $ticket->rejection_reason = $reason; // <--- Pakai variabel $reason
+    $ticket->save();
+
+    \App\Models\TicketLog::create([
+        'ticket_id' => $ticket->id, 
+        'user_id' => auth()->id(),
+        'action' => 'REJECTED_BY_LEADER', 
+        'description' => "Pimpinan menolak layanan. Alasan: {$reason}", // <--- Pakai variabel $reason
+        'created_at' => now(),
+    ]);
+
+    $opdChatId = $ticket->requester->telegram_chat_id ?? null;
+    if ($opdChatId) {
+        \App\Jobs\SendTelegramJob::dispatch(
+            "❌ *Layanan Ditolak*\n━━━━━━━━━━━━━━━━━━━\nTicket : #{$ticket->ticket_number}\nLayanan: {$ticket->service->name}\nAlasan : {$reason}\n━━━━━━━━━━━━━━━━━━━\n_Silakan buat pengajuan baru jika sudah memperbaiki sesuai ketentuan._", 
+            $opdChatId
+        );
+    }
+
+    return response()->json([
+        'message' => 'Layanan berhasil ditolak.',
+        'data' => $ticket->load(['service', 'requester'])
+    ]);
+}
 }

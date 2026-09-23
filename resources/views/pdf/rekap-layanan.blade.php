@@ -8,10 +8,6 @@
 
     <style>
 
-        /* =====================================================
-           PENGATURAN HALAMAN WORD
-           ===================================================== */
-
         @page {
             size: A4 landscape;
             margin: 1.5cm 1.5cm 1.8cm 1.5cm;
@@ -44,11 +40,6 @@
             padding: 0;
         }
 
-
-        /* =====================================================
-           UTILITY
-           ===================================================== */
-
         .center {
             text-align: center;
         }
@@ -76,12 +67,6 @@
         .info-text {
             font-size: 8pt;
         }
-
-
-        /* =====================================================
-           KOP SURAT
-           KHUSUS WORD
-           ===================================================== */
 
         .kop-table {
             width: 100%;
@@ -130,11 +115,6 @@
             border-bottom: 3px double #000000;
         }
 
-
-        /* =====================================================
-           JUDUL LAPORAN
-           ===================================================== */
-
         .judul-wrapper {
             margin-top: 14pt;
             margin-bottom: 12pt;
@@ -150,11 +130,6 @@
             margin-top: 4pt;
             font-size: 8pt;
         }
-
-
-        /* =====================================================
-           TABEL LAPORAN
-           ===================================================== */
 
         .data-table {
             width: 100%;
@@ -190,11 +165,6 @@
             line-height: 1.3;
         }
 
-
-        /* =====================================================
-           LEBAR KOLOM
-           ===================================================== */
-
         .col-no {
             width: 3%;
         }
@@ -227,11 +197,6 @@
             width: 14%;
         }
 
-
-        /* =====================================================
-           BARIS TABEL
-           ===================================================== */
-
         .ganjil {
             background-color: #F4F6F8;
         }
@@ -248,11 +213,6 @@
             text-align: left;
         }
 
-
-        /* =====================================================
-           DATA KOSONG
-           ===================================================== */
-
         .empty-row td {
             padding: 18px 10px;
 
@@ -261,11 +221,6 @@
             font-size: 8pt;
             font-style: italic;
         }
-
-
-        /* =====================================================
-           FOOTER
-           ===================================================== */
 
         .footer-wrapper {
             margin-top: 8pt;
@@ -282,11 +237,6 @@
 
             font-size: 7.5pt;
         }
-
-
-        /* =====================================================
-           TANDA TANGAN
-           ===================================================== */
 
         .signature-wrapper {
             margin-top: 18pt;
@@ -333,11 +283,6 @@
             font-size: 7.5pt;
         }
 
-
-        /* =====================================================
-           KHUSUS KOMPATIBILITAS WORD
-           ===================================================== */
-
         img {
             display: inline-block;
         }
@@ -353,16 +298,9 @@
 
 <body>
 
-
-    <!-- =====================================================
-         KOP SURAT
-         ===================================================== -->
-
     <table class="kop-table">
 
         <tr>
-
-            <!-- LOGO -->
 
             <td class="logo-cell" rowspan="4">
 
@@ -378,9 +316,6 @@
 
             </td>
 
-
-            <!-- NAMA PEMERINTAH -->
-
             <td class="kop-content">
 
                 <div class="kop-judul">
@@ -390,9 +325,6 @@
             </td>
 
         </tr>
-
-
-        <!-- NAMA DINAS -->
 
         <tr>
 
@@ -406,9 +338,6 @@
 
         </tr>
 
-
-        <!-- ALAMAT -->
-
         <tr>
 
             <td class="kop-content">
@@ -421,9 +350,6 @@
             </td>
 
         </tr>
-
-
-        <!-- KONTAK -->
 
         <tr>
 
@@ -439,9 +365,6 @@
 
         </tr>
 
-
-        <!-- GARIS KOP -->
-
         <tr>
 
             <td></td>
@@ -451,11 +374,6 @@
         </tr>
 
     </table>
-
-
-    <!-- =====================================================
-         JUDUL LAPORAN
-         ===================================================== -->
 
     <table class="judul-wrapper">
 
@@ -467,15 +385,14 @@
                     LAPORAN REKAPITULASI LAYANAN
                 </div>
 
-
                 <div class="periode">
 
                     Periode:
-                    {{ \Carbon\Carbon::parse($start_date)->translatedFormat('d F Y') }}
+                    {{ $start_date ? \Carbon\Carbon::parse($start_date)->locale('id')->translatedFormat('d F Y') : 'Awal Data' }}
 
                     s/d
 
-                    {{ \Carbon\Carbon::parse($end_date)->translatedFormat('d F Y') }}
+                    {{ $end_date ? \Carbon\Carbon::parse($end_date)->locale('id')->translatedFormat('d F Y') : 'Data Terbaru' }}
 
                     &nbsp;&nbsp;|&nbsp;&nbsp;
 
@@ -494,11 +411,6 @@
         </tr>
 
     </table>
-
-
-    <!-- =====================================================
-         TABEL DATA
-         ===================================================== -->
 
     <table class="data-table">
 
@@ -542,33 +454,13 @@
 
         </thead>
 
-
         <tbody>
-
 
             @forelse($tickets as $index => $ticket)
 
                 @php
 
-                    /*
-                    |--------------------------------------------------------------------------
-                    | JUDUL / PERIHAL
-                    |--------------------------------------------------------------------------
-                    */
-
-                    $judul =
-                        $ticket->form_data['namaAplikasi']
-                        ?? $ticket->form_data['topik']
-                        ?? $ticket->form_data['nama_acara']
-                        ?? $ticket->form_data['nama_kegiatan']
-                        ?? '-';
-
-
-                    /*
-                    |--------------------------------------------------------------------------
-                    | JADWAL PELAKSANAAN
-                    |--------------------------------------------------------------------------
-                    */
+                    $judul = $ticket->report_title;
 
                     $pelaksanaan = '-';
 
@@ -577,7 +469,7 @@
                         $pelaksanaan =
                             $ticket->schedule_start->format('d/m/Y H:i')
                             . ' s/d '
-                            . $ticket->schedule_end->format('H:i')
+                            . ($ticket->schedule_end ? $ticket->schedule_end->format('H:i') : '-')
                             . ' WITA';
 
                     } elseif ($ticket->due_date) {
@@ -587,37 +479,13 @@
 
                     }
 
-
-                    /*
-                    |--------------------------------------------------------------------------
-                    | PEMOHON
-                    |--------------------------------------------------------------------------
-                    */
-
                     $pemohon =
                         ($ticket->requester->name ?? '-')
                         . ' ('
                         . ($ticket->requester->bidang ?? 'OPD')
                         . ')';
 
-
-                    /*
-                    |--------------------------------------------------------------------------
-                    | STAFF
-                    |--------------------------------------------------------------------------
-                    */
-
-                    $staffName =
-                        $ticket->staff
-                        ? $ticket->staff->name
-                        : '-';
-
-
-                    /*
-                    |--------------------------------------------------------------------------
-                    | STATUS
-                    |--------------------------------------------------------------------------
-                    */
+                    $staffName = $ticket->report_staff_name;
 
                     $statusLabel = strtoupper($ticket->status);
 
@@ -636,7 +504,6 @@
 
                     }
 
-
                     if (
                         in_array(
                             $ticket->status,
@@ -651,13 +518,11 @@
 
                     }
 
-
                     if ($ticket->status === 'completed') {
 
                         $statusLabel = 'SELESAI';
 
                     }
-
 
                     if ($ticket->status === 'rejected') {
 
@@ -665,13 +530,11 @@
 
                     }
 
-
                     if ($ticket->status === 'cancelled') {
 
                         $statusLabel = 'DIBATALKAN';
 
                     }
-
 
                     if ($ticket->status === 'expired') {
 
@@ -679,19 +542,11 @@
 
                     }
 
-
                     if ($ticket->status === 'needs_reschedule') {
 
                         $statusLabel = 'JADWAL ULANG';
 
                     }
-
-
-                    /*
-                    |--------------------------------------------------------------------------
-                    | ZEBRA ROW
-                    |--------------------------------------------------------------------------
-                    */
 
                     $rowClass =
                         ($index % 2 === 0)
@@ -700,71 +555,43 @@
 
                 @endphp
 
-
                 <tr class="{{ $rowClass }}">
-
-
-                    <!-- NO -->
 
                     <td class="text-center">
                         {{ $index + 1 }}
                     </td>
 
-
-                    <!-- ID TIKET -->
-
                     <td class="text-center">
                         #{{ $ticket->ticket_number }}
                     </td>
-
-
-                    <!-- KATEGORI -->
 
                     <td class="text-center">
                         {{ strtoupper($ticket->service->category ?? '-') }}
                     </td>
 
-
-                    <!-- PEMOHON -->
-
                     <td class="text-left">
                         {{ $pemohon }}
                     </td>
-
-
-                    <!-- JUDUL -->
 
                     <td class="text-left">
                         {{ $judul }}
                     </td>
 
-
-                    <!-- TANGGAL PENGAJUAN -->
-
                     <td class="text-center">
                         {{ $ticket->created_at->format('d/m/Y') }}
                     </td>
-
-
-                    <!-- TANGGAL PELAKSANAAN -->
 
                     <td class="text-center">
                         {{ $pelaksanaan }}
                     </td>
 
-
-                    <!-- STAFF -->
-
                     <td class="text-left">
                         {{ $staffName }}
                     </td>
 
-
                 </tr>
 
-
             @empty
-
 
                 <tr class="empty-row">
 
@@ -776,18 +603,11 @@
 
                 </tr>
 
-
             @endforelse
-
 
         </tbody>
 
     </table>
-
-
-    <!-- =====================================================
-         INFORMASI FOOTER
-         ===================================================== -->
 
     <div class="footer-wrapper">
 
@@ -802,11 +622,10 @@
 
                 </td>
 
-
                 <td class="right">
 
                     Dicetak:
-                    {{ $printed_at ?? now()->translatedFormat('d F Y, H:i') }}
+                    {{ $printed_at ?? now()->locale('id')->translatedFormat('d F Y, H:i') }}
                     WITA
 
                 </td>
@@ -817,47 +636,32 @@
 
     </div>
 
-
-    <!-- =====================================================
-         TANDA TANGAN
-         ===================================================== -->
-
     <div class="signature-wrapper">
 
         <table class="signature-table">
 
             <tr>
 
-
-                <!-- RUANG KOSONG -->
-
                 <td class="signature-space-left">
                     &nbsp;
                 </td>
 
-
-                <!-- TANDA TANGAN -->
-
                 <td class="signature">
-
 
                     <p>
 
                         Bontang,
-                        {{ \Carbon\Carbon::now()->translatedFormat('d F Y') }}
+                        {{ \Carbon\Carbon::now()->locale('id')->translatedFormat('d F Y') }}
 
                     </p>
-
 
                     <p>
                         Kepala Dinas Kominfo,
                     </p>
 
-
                     <div class="signature-space">
                         &nbsp;
                     </div>
-
 
                     <p class="signature-name">
 
@@ -865,23 +669,19 @@
 
                     </p>
 
-
                     <p class="nip">
 
                         NIP. ........................................
 
                     </p>
 
-
                 </td>
-
 
             </tr>
 
         </table>
 
     </div>
-
 
 </body>
 

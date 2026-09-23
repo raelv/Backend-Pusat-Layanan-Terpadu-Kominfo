@@ -15,8 +15,14 @@ class TicketCommentController extends Controller
         $ticket = Ticket::find($ticket_id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
 
-        if (auth()->user()->role === 'opd' && $ticket->user_id !== auth()->id()) {
-            return response()->json(['message' => 'Akses ditolak'], 403);
+        $user = auth()->user();
+
+        // ✅ FIX: Tambahkan pengecekan akses untuk OPD & Staff
+        if ($user->role === 'opd' && $ticket->user_id !== $user->id) {
+            return response()->json(['message' => 'Akses ditolak. Bukan tiket Anda.'], 403);
+        }
+        if ($user->role === 'staff' && $ticket->assigned_staff_id !== $user->id) {
+            return response()->json(['message' => 'Akses ditolak. Anda bukan penangan tiket ini.'], 403);
         }
 
         $comments = TicketComment::where('ticket_id', $ticket_id)
@@ -37,8 +43,14 @@ class TicketCommentController extends Controller
         $ticket = Ticket::with(['service', 'requester', 'staff'])->find($ticket_id);
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
 
-        if (auth()->user()->role === 'opd' && $ticket->user_id !== auth()->id()) {
+        $user = auth()->user();
+
+        // ✅ FIX: Tambahkan pengecekan akses untuk OPD & Staff
+        if ($user->role === 'opd' && $ticket->user_id !== $user->id) {
             return response()->json(['message' => 'Akses ditolak. Bukan tiket Anda.'], 403);
+        }
+        if ($user->role === 'staff' && $ticket->assigned_staff_id !== $user->id) {
+            return response()->json(['message' => 'Akses ditolak. Anda bukan penangan tiket ini.'], 403);
         }
 
         if (is_null($ticket->assigned_staff_id)) {
@@ -57,12 +69,12 @@ class TicketCommentController extends Controller
 
             $comment = TicketComment::create([
                 'ticket_id' => $ticket_id,
-                'user_id'   => auth()->id(),
+                'user_id'   => $user->id,
                 'message'   => $request->message,
                 'file_path' => $filePath,
             ]);
 
-            // ✅ FORMAT PESAN
+            // ✅ FORMAT PESAN TELEGRAM
             $nomorTiket = 'Ticket ' . ($ticket->ticket_number ?? $ticket_id);
             $role = strtoupper($comment->user->role ?? 'User');
             $namaLayanan = $ticket->service->name ?? 'Tidak diketahui';
@@ -84,14 +96,12 @@ class TicketCommentController extends Controller
                   . "{$lampiranInfo}\n"
                   . "━━━━━━━━━━━━━━━━━━━";
             
-            $actorRole = auth()->user()->role;
+            $actorRole = $user->role;
             
-            // ✅ 1. KIRIM KE GROUP HANYA JIKA YANG CHAT OPD
             if ($actorRole === 'opd') {
                 SendTelegramJob::dispatch($text);
             }
 
-            // ✅ 2. KIRIM DM KE LAWAN BICARA (PRIVATE CHAT)
             if ($actorRole === 'opd' && $ticket->staff && $ticket->staff->telegram_chat_id) {
                 SendTelegramJob::dispatch($text, $ticket->staff->telegram_chat_id);
             } elseif ($actorRole === 'staff' && $ticket->requester && $ticket->requester->telegram_chat_id) {

@@ -202,7 +202,7 @@ class SendDeadlineReminders extends Command
                 continue;
             }
 
-            $text = "⏰ *PENGINGAT LAYANAN*\n".
+            $text = "⏰ *PENGINGAT LAYANAN*\\n".
                     "━━━━━━━━━━━━━━━━━━━\n".
                     "Ticket : *#{$ticket->ticket_number}*\n".
                     "Status : Telah melewati jam selesai\n".

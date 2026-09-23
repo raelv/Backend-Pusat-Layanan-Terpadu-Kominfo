@@ -15,6 +15,7 @@ use PhpOffice\PhpSpreadsheet\Style\Fill;
 class RekapLayananExport implements FromQuery, WithHeadings, WithMapping, WithStyles, WithColumnWidths
 {
     protected $query;
+    protected $no = 0;
 
     public function __construct($query)
     {
@@ -28,20 +29,19 @@ class RekapLayananExport implements FromQuery, WithHeadings, WithMapping, WithSt
 
     public function map($ticket): array
     {
-        static $no = 0;
-        $no++;
+        $this->no++;
 
-        $judul = $ticket->form_data['namaAplikasi'] ?? $ticket->form_data['topik'] ?? $ticket->form_data['nama_acara'] ?? $ticket->form_data['nama_kegiatan'] ?? '-';
-        
+        $judul = $ticket->report_title;
+
         $pelaksanaan = '-';
         if ($ticket->schedule_start) {
-            $pelaksanaan = $ticket->schedule_start->format('d/m/Y H:i') . ' s/d ' . $ticket->schedule_end->format('H:i');
+            $pelaksanaan = $ticket->schedule_start->format('d/m/Y H:i') . ' s/d ' . ($ticket->schedule_end ? $ticket->schedule_end->format('H:i') : '-');
         } elseif ($ticket->due_date) {
             $pelaksanaan = $ticket->due_date->format('d/m/Y');
         }
 
         $pemohon = trim(($ticket->requester->name ?? '-') . ' (' . ($ticket->requester->bidang ?? 'OPD') . ')');
-        $staffName = $ticket->staff ? $ticket->staff->name : '-';
+        $staffName = $ticket->report_staff_name;
 
         $statusLabel = strtoupper($ticket->status);
         if (in_array($ticket->status, ['assigned', 'in_progress', 'approved_admin'])) $statusLabel = 'DIPROSES';
@@ -53,7 +53,7 @@ class RekapLayananExport implements FromQuery, WithHeadings, WithMapping, WithSt
         if ($ticket->status === 'needs_reschedule') $statusLabel = 'JADWAL ULANG';
 
         return [
-            $no,
+            $this->no,
             '#' . $ticket->ticket_number,
             strtoupper($ticket->service->category ?? '-'),
             $pemohon,
@@ -83,21 +83,20 @@ class RekapLayananExport implements FromQuery, WithHeadings, WithMapping, WithSt
     public function columnWidths(): array
     {
         return [
-            'A' => 5,    // No
-            'B' => 12,   // ID Tiket
-            'C' => 18,   // Kategori
-            'D' => 30,   // Instansi
-            'E' => 30,   // Judul
-            'F' => 14,   // Tgl Pengajuan
-            'G' => 25,   // Tgl Pelaksanaan
-            'H' => 22,   // Staff
-            'I' => 15,   // Status
+            'A' => 5,
+            'B' => 12,
+            'C' => 18,
+            'D' => 30,
+            'E' => 30,
+            'F' => 14,
+            'G' => 25,
+            'H' => 22,
+            'I' => 15,
         ];
     }
 
     public function styles(Worksheet $sheet)
     {
-        // Warna header biru, tulisan putih, tebal
         $sheet->getStyle('A1:I1')->applyFromArray([
             'font' => [
                 'bold' => true,
@@ -114,16 +113,12 @@ class RekapLayananExport implements FromQuery, WithHeadings, WithMapping, WithSt
             ],
         ]);
 
-        // Auto filter
         $sheet->setAutoFilter('A1:I1');
 
-        // Tinggi baris header
         $sheet->getRowDimension(1)->setRowHeight(25);
 
-        // Ambil jumlah baris data
         $highestRow = $sheet->getHighestDataRow();
 
-        // Border semua sel
         $sheet->getStyle('A1:I' . $highestRow)->applyFromArray([
             'borders' => [
                 'allBorders' => [
@@ -133,7 +128,6 @@ class RekapLayananExport implements FromQuery, WithHeadings, WithMapping, WithSt
             ],
         ]);
 
-        // Wrap text dan alignment body
         $sheet->getStyle('A2:I' . $highestRow)->applyFromArray([
             'alignment' => [
                 'vertical' => Alignment::VERTICAL_CENTER,
@@ -141,11 +135,9 @@ class RekapLayananExport implements FromQuery, WithHeadings, WithMapping, WithSt
             ],
         ]);
 
-        // Center untuk kolom No dan Status
         $sheet->getStyle('A2:A' . $highestRow)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle('I2:I' . $highestRow)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
 
-        // Zebrastrip (warna selang-seling)
         for ($i = 2; $i <= $highestRow; $i++) {
             if ($i % 2 == 0) {
                 $sheet->getStyle('A' . $i . ':I' . $i)->applyFromArray([

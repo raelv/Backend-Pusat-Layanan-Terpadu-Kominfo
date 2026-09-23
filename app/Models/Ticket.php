@@ -143,4 +143,55 @@ class Ticket extends Model
         // 6. Return negatif jika sudah lewat, positif jika masih tersisa
         return $now->gt($dueDate) ? (-$workingDays) : $workingDays;
     }
+
+public function getReportTitleAttribute()
+{
+    $candidates = [
+        'nama_aplikasi', 'namaAplikasi',
+        'topik',
+        'nama_acara', 'namaAcara',
+        'nama_kegiatan', 'namaKegiatan',
+        'tema',
+        'acara',
+        'agenda',
+        'nama_rapat', 'namaRapat',
+        'judul_rapat', 'judulRapat',
+        'judul_acara', 'judulAcara',
+        'judul',
+        'perihal',
+        'keperluan',
+        'materi',
+        'topikMeeting', 'topik_meeting',
+    ];
+
+    $form = $this->form_data ?? [];
+
+    foreach ($candidates as $key) {
+        if (isset($form[$key]) && $form[$key] !== '' && $form[$key] !== null && $form[$key] !== []) {
+            $value = $form[$key];
+            return is_array($value) ? implode(', ', array_map('strval', $value)) : trim((string) $value);
+        }
+    }
+
+    return $this->service->name ?? 'Tanpa Judul';
+}
+
+public function getReportStaffNameAttribute()
+{
+    if ($this->staff) {
+        return $this->staff->name;
+    }
+
+    $lastStaffLog = TicketLog::where('ticket_id', $this->id)
+        ->whereIn('action', ['CLAIMED', 'IN_PROGRESS', 'COMPLETED'])
+        ->whereNotNull('user_id')
+        ->orderByDesc('id')
+        ->first();
+
+    if ($lastStaffLog && $lastStaffLog->actor) {
+        return $lastStaffLog->actor->name;
+    }
+
+    return 'Belum Ditugaskan';
+}
 }

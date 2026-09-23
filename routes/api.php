@@ -223,7 +223,6 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // --- EXPORT LAMA ---
-    Route::get('tickets/export-excel', [TicketController::class, 'exportExcel'])->middleware('throttle:10,1');
     Route::get('tickets/{ticket}/export-word', [TicketController::class, 'exportWord'])->middleware('throttle:10,1');
     Route::get('tickets/{ticket}/export-excel-bukti', [TicketController::class, 'exportExcelBukti'])->middleware('throttle:10,1');
 
@@ -413,6 +412,14 @@ Route::middleware('auth:sanctum')->group(function () {
                 return response()->json(['message' => 'Staff tidak ditemukan'], 404);
             }
 
+            // ✅ FIX: HARD BLOCK - Jangan cuma warning, tolak total!
+            if (($user->active_task_count ?? 0) > 0) {
+                return response()->json([
+                    'message' => "Gagal memperbarui data. Staff ini sedang melaksanakan {$user->active_task_count} tugas aktif. Data dikunci selama masih bertugas.",
+                    'error_field' => 'active_task'
+                ], 403);
+            }
+
             $request->validate([
                 'role' => 'sometimes|in:staff,admin',
                 'bidang_ids' => 'sometimes|array',
@@ -465,6 +472,14 @@ Route::middleware('auth:sanctum')->group(function () {
                 return response()->json(['message' => 'User tidak ditemukan'], 404);
             }
 
+            // ✅ FIX: HARD BLOCK - Jangan cuma warning, tolak total!
+            if ($user->role === 'staff' && ($user->active_task_count ?? 0) > 0) {
+                return response()->json([
+                    'message' => "Gagal memperbarui data. Staff ini sedang melaksanakan {$user->active_task_count} tugas aktif. Data dikunci selama masih bertugas.",
+                    'error_field' => 'active_task'
+                ], 403); // 403 Forbidden
+            }
+
             $request->validate([
                 'role' => 'sometimes|in:staff,admin',
                 'bidang_ids' => 'sometimes|array',
@@ -472,11 +487,6 @@ Route::middleware('auth:sanctum')->group(function () {
                 'access_list' => 'sometimes|array',
                 'access_list.*' => 'in:it,zoom,command_center'
             ]);
-
-            $warningMessage = null;
-            if ($user->active_task_count > 0) {
-                $warningMessage = "PERINGATAN: User ini sedang mengerjakan {$user->active_task_count} tugas aktif.";
-            }
 
             if ($request->has('role')) {
                 if (!in_array($user->role, ['staff', 'admin'])) {
@@ -503,7 +513,6 @@ Route::middleware('auth:sanctum')->group(function () {
 
             return response()->json([
                 'message' => 'Data user berhasil diperbarui',
-                'warning' => $warningMessage,
                 'data' => $user->load('bidangs')
             ]);
         })->middleware('throttle:20,1');
