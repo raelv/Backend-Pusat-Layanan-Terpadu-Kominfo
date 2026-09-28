@@ -3,7 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Storage; // <-- TAMBAHKAN BARIS INI
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class TicketComment extends Model
 {
@@ -14,17 +14,12 @@ class TicketComment extends Model
         'file_path',
     ];
 
-    public function getFilePathAttribute($value)
-    {
-        return $value ? Storage::url($value) : null;
-    }
-
-    public function ticket()
+    public function ticket(): BelongsTo
     {
         return $this->belongsTo(Ticket::class);
     }
 
-    public function user()
+    public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }

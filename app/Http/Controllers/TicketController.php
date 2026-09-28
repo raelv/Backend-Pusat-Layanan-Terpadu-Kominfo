@@ -20,22 +20,18 @@ class TicketController extends Controller
     public function index(Request $request)
     {
         $user = Auth::user();
-        // ✅ FIX: Ditambahkan zoomLink agar FE bisa baca status link di daftar tiket
+
         $query = Ticket::with(['service', 'staff', 'requester', 'zoomLink', 'comments.user']);
 
         if ($user->role === 'admin') {
-            // Admin lihat semua
         } elseif ($user->role === 'staff') {
             $query->where('assigned_staff_id', $user->id)
-                  ->orWhere(function($q) {
-                      $q->whereNull('assigned_staff_id')
+                ->orWhere(function($q) {
+                    $q->whereNull('assigned_staff_id')
                         ->whereIn('status', ['pending', 'queued']);
-                  });
+                });
         } else {
-            $query->where(function($q) use ($user) {
-                $q->where('user_id', $user->id) 
-                  ->orWhereIn('status', ['pending', 'queued']);
-            });
+            $query->where('user_id', $user->id);
         }
 
         if ($request->has('service_type')) {
@@ -53,7 +49,7 @@ class TicketController extends Controller
 
         if ($request->has('search') && !empty($request->search)) {
             $searchTerm = $request->search;
-            
+
             if (is_numeric($searchTerm)) {
                 $query->where('ticket_number', (int)$searchTerm);
             } else {
@@ -126,7 +122,6 @@ public function store(Request $request)
     $isScheduleBased = $service->is_schedule_based;
     $category = strtolower($service->category);
 
-    // ✅ CEK HARI & JAM OPERASIONAL PENGAJUAN
     if (!in_array(strtolower($user->role), ['admin', 'staff', 'pimpinan'])) {
         $now = \Carbon\Carbon::now('Asia/Makassar');
 
@@ -150,7 +145,6 @@ public function store(Request $request)
         }
     }
 
-    // ✅ VALIDASI INPUT DASAR
     $validationRules = [
         'service_id' => 'required|exists:services,id',
         'form_data' => 'required',
@@ -177,7 +171,6 @@ public function store(Request $request)
         $formData = [];
     }
 
-    // ✅ NORMALISASI KEY
     $mapKeys = [
         'jumlahPeserta' => 'jumlah_peserta',
         'namaAcara' => 'nama_acara',
@@ -195,7 +188,6 @@ public function store(Request $request)
         }
     }
 
-    // ✅ VALIDASI NAMA LENGKAP
     if (isset($formData['nama'])) {
         $nama = trim($formData['nama']);
 
@@ -216,7 +208,6 @@ public function store(Request $request)
         $formData['nama'] = $nama;
     }
 
-    // ✅ VALIDASI JUMLAH PESERTA CC
     if ($category === 'command_center') {
         $jumlahPeserta = isset($formData['jumlah_peserta']) ? (int)$formData['jumlah_peserta'] : null;
 
@@ -246,7 +237,6 @@ public function store(Request $request)
         }
     }
 
-    // ✅ VALIDASI WHATSAPP
     if (isset($formData['wa'])) {
         $wa = preg_replace('/\s+/', '', $formData['wa']);
 
@@ -270,7 +260,6 @@ public function store(Request $request)
         }
     }
 
-    // ✅ VALIDASI JADWAL (DI LUAR TRANSACTION)
     if ($isScheduleBased) {
         $newStart = \Carbon\Carbon::parse($request->schedule_start, 'Asia/Makassar');
         $newEnd = \Carbon\Carbon::parse($request->schedule_end, 'Asia/Makassar');
@@ -279,7 +268,6 @@ public function store(Request $request)
         $durasiJam = $newStart->diffInMinutes($newEnd) / 60;
         $layananLabel = $category === 'zoom' ? 'Zoom' : 'Command Center';
 
-        // Cek jadwal lewat
         if ($newStart->lt($nowWita)) {
             return response()->json([
                 'message' => 'Tidak dapat melakukan pemesanan untuk jadwal yang sudah lewat.',
@@ -288,7 +276,6 @@ public function store(Request $request)
             ], 422);
         }
 
-        // Cek durasi
         if ($durasiJam > 6) {
             return response()->json([
                 'message' => 'Durasi pemesanan ' . $layananLabel . ' melebihi batas maksimal.',
@@ -299,7 +286,6 @@ public function store(Request $request)
             ], 422);
         }
 
-        // ✅ VALIDASI COMMAND CENTER
         if ($category === 'command_center') {
             if ($newStart->isWeekend()) {
                 return response()->json([
@@ -347,7 +333,6 @@ public function store(Request $request)
             }
         }
 
-        // ✅ VALIDASI ZOOM (LOGIKA DINAMIS)
         if ($category === 'zoom') {
             $totalLinks = \App\Models\ZoomLink::count();
 
@@ -398,21 +383,19 @@ public function store(Request $request)
         }
     }
 
-    // ✅ MULAI DATABASE TRANSACTION
     return \Illuminate\Support\Facades\DB::transaction(function () use ($request, $user, $service, $isScheduleBased, $category, $formData) {
 
         $suratPath = null;
         $lampiranPath = null;
 
         $fail = function ($message, $status = 422) use (&$suratPath, &$lampiranPath) {
-            if ($suratPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($suratPath);
-            if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('public')->delete($lampiranPath);
+            if ($suratPath) \Illuminate\Support\Facades\Storage::disk('local')->delete($suratPath);
+            if ($lampiranPath) \Illuminate\Support\Facades\Storage::disk('local')->delete($lampiranPath);
             throw new \Illuminate\Http\Exceptions\HttpResponseException(
                 response()->json(['message' => $message], $status)
             );
         };
 
-        // 1. Upload File
         try {
             if ($request->hasFile('surat_permohonan')) {
                 $file = $request->file('surat_permohonan');
@@ -426,7 +409,7 @@ public function store(Request $request)
 
                 $safeName = str_replace(' ', '_', pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
                 $safeName = preg_replace('/[^A-Za-z0-9_\-.]/', '', $safeName);
-                $suratPath = $file->storeAs('surat_permohonan', $safeName . '.' . $file->getClientOriginalExtension(), 'public');
+                $suratPath = $file->storeAs('surat_permohonan', $safeName . '.' . $file->getClientOriginalExtension(), 'local');
             }
 
             if ($request->hasFile('lampiran_tambahan')) {
@@ -441,13 +424,12 @@ public function store(Request $request)
 
                 $safeName = str_replace(' ', '_', pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
                 $safeName = preg_replace('/[^A-Za-z0-9_\-.]/', '', $safeName);
-                $lampiranPath = $file->storeAs('lampiran_tambahan', $safeName . '.' . $file->getClientOriginalExtension(), 'public');
+                $lampiranPath = $file->storeAs('lampiran_tambahan', $safeName . '.' . $file->getClientOriginalExtension(), 'local');
             }
         } catch (\Exception $e) {
             $fail('Gagal mengupload file surat permohonan.', 500);
         }
 
-        // 2. Hitung Due Date
         $dueDate = null;
         if ($isScheduleBased) {
             $newEnd = \Carbon\Carbon::parse($request->schedule_end, 'Asia/Makassar');
@@ -468,7 +450,6 @@ public function store(Request $request)
             }
         }
 
-        // 3. Simpan ke Database
         $ticket = Ticket::create([
             'service_id' => $request->service_id,
             'user_id' => $user->id,
@@ -489,7 +470,6 @@ public function store(Request $request)
             'action' => 'CREATED', 'description' => 'Tiket layanan baru berhasil dibuat dan menunggu disposisi pimpinan.', 'created_at' => now(),
         ]);
 
-        // 4. Kirim Notifikasi Telegram
         $opdName = $user->name ?? 'Instansi OPD';
         $categoryLabel = $service->category_label;
 
@@ -802,16 +782,16 @@ public function update(Request $request, $id)
 
     if ($request->hasFile('surat_permohonan')) {
         if ($ticket->surat_permohonan_path) {
-            \Illuminate\Support\Facades\Storage::disk('public')->delete($ticket->surat_permohonan_path);
+            \Illuminate\Support\Facades\Storage::disk('local')->delete($ticket->surat_permohonan_path);
         }
-        $ticket->surat_permohonan_path = $request->file('surat_permohonan')->store('surat_permohonan', 'public');
+        $ticket->surat_permohonan_path = $request->file('surat_permohonan')->store('surat_permohonan', 'local');
     }
 
     if ($request->hasFile('lampiran_tambahan')) {
         if ($ticket->lampiran_tambahan_path) {
-            \Illuminate\Support\Facades\Storage::disk('public')->delete($ticket->lampiran_tambahan_path);
+            \Illuminate\Support\Facades\Storage::disk('local')->delete($ticket->lampiran_tambahan_path);
         }
-        $ticket->lampiran_tambahan_path = $request->file('lampiran_tambahan')->store('lampiran_tambahan', 'public');
+        $ticket->lampiran_tambahan_path = $request->file('lampiran_tambahan')->store('lampiran_tambahan', 'local');
     }
 
     $ticket->form_data = $formData;
@@ -827,13 +807,13 @@ public function update(Request $request, $id)
     if (($ticket->status === 'needs_reschedule' || $ticket->status === 'expired') && ($ticket->isDirty('schedule_start') || $ticket->isDirty('schedule_end'))) {
         $ticket->status = 'pending';
 
-TicketLog::create([
-    'ticket_id' => $ticket->id,
-    'user_id' => auth()->id(),
-    'action' => 'RESCHEDULED',
-    'description' => 'OPD mengubah jadwal pelaksanaan dan tiket dikembalikan ke antrian.',
-    'created_at' => now(),
-]);
+        TicketLog::create([
+            'ticket_id' => $ticket->id,
+            'user_id' => auth()->id(),
+            'action' => 'RESCHEDULED',
+            'description' => 'OPD mengubah jadwal pelaksanaan dan tiket dikembalikan ke antrian.',
+            'created_at' => now(),
+        ]);
     }
 
     try {
@@ -1501,16 +1481,14 @@ public function exportWord($id)
     {
         $user = Auth::user();
 
-        // 1. Cari tiket atau komentar yang memiliki file ini
         $ticket = Ticket::where('surat_permohonan_path', $path)
             ->orWhere('lampiran_tambahan_path', $path)
             ->first();
 
         if (!$ticket) {
-            // Coba cari di tabel komentar jika bukan file tiket utama
             $comment = \App\Models\TicketComment::where('file_path', $path)->first();
             if ($comment) {
-                $ticket = $comment->ticket; // Ambil tiket relasinya
+                $ticket = $comment->ticket;
             }
         }
 
@@ -1518,23 +1496,18 @@ public function exportWord($id)
             return response()->json(['message' => 'File tidak ditemukan atau tidak terkait tiket manapun.'], 404);
         }
 
-        // 2. Validasi Hak Akses (Hard Block IDOR)
-        if ($user->role === 'opd' && $ticket->user_id !== $user->id) {
-            return response()->json(['message' => 'Akses ditolak. Anda bukan pemilik tiket ini.'], 403);
+        $allowed = in_array($user->role, ['admin', 'pimpinan'])
+            || $ticket->user_id === $user->id
+            || $ticket->assigned_staff_id === $user->id;
+
+        if (!$allowed) {
+            return response()->json(['message' => 'Akses ditolak. Anda tidak berhak mengakses file ini.'], 403);
         }
 
-        if ($user->role === 'staff' && $ticket->assigned_staff_id !== $user->id) {
-            return response()->json(['message' => 'Akses ditolak. Anda bukan penangan tiket ini.'], 403);
-        }
-
-        // Admin & Pimpinan bebas akses
-
-        // 3. Cek fisik file di storage
-        if (!Storage::disk('public')->exists($path)) {
+        if (!Storage::disk('local')->exists($path)) {
             return response()->json(['message' => 'File rusak atau sudah dihapus dari server.'], 404);
         }
 
-        // 4. Return file untuk di-preview di browser (inline)
-        return Storage::disk('public')->response($path);
+        return Storage::disk('local')->response($path);
     }
 }

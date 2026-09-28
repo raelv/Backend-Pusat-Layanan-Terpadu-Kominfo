@@ -316,7 +316,7 @@ Route::middleware('auth:sanctum')->group(function () {
             return response()->json(['message' => 'Akses ditolak'], 403);
         }
 
-        return \Illuminate\Support\Facades\Storage::download($ticket->surat_permohonan_path);
+        return \Illuminate\Support\Facades\Storage::disk('local')->download($ticket->surat_permohonan_path);
     });
 
     // --- ✅ LAPORAN KOLEKTIF (DI LUAR GRUP ADMIN)
