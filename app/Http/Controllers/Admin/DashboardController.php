@@ -16,35 +16,50 @@ class DashboardController extends Controller
             $totalTickets = Ticket::count();
             $completedTickets = Ticket::where('status', 'completed')->count();
             $pendingTickets = Ticket::whereIn('status', ['pending_approval', 'pending', 'queued'])->count();
+            $inProgressTickets = Ticket::whereIn('status', ['assigned', 'in_progress'])->count();
 
-            // ✅ FIX: Diubah ke huruf kecil sesuai isi database
+            $rekapStatus = [
+                'pending'     => Ticket::whereIn('status', ['pending', 'queued', 'pending_approval'])->count(),
+                'in_progress' => Ticket::whereIn('status', ['assigned', 'in_progress'])->count(),
+                'completed'   => $completedTickets,
+                'rejected'    => Ticket::where('status', 'rejected')->count(),
+                'expired'     => Ticket::where('status', 'expired')->count(),
+            ];
+
             $rekapTugas = Ticket::select('services.category', DB::raw('count(*) as total'))
                 ->join('services', 'tickets.service_id', '=', 'services.id')
                 ->whereIn('services.category', ['it', 'zoom', 'command_center'])
                 ->groupBy('services.category')
                 ->pluck('total', 'category')->toArray();
 
-            $staffData = User::where('role', 'staff')->get()->map(function ($staff) {
-                return [
-                    'id' => $staff->id,
-                    'name' => $staff->name,
-                    'nip' => $staff->nip,
-                    'bidang' => $staff->bidang ?? '-',
-                    'bidangs' => $staff->bidangs ?? [],
-                    'attendance_status' => $staff->attendance_status,
-                    'active_task_count' => $staff->active_task_count,
-                    'is_overloaded' => $staff->is_overloaded, 
-                    'service_access' => $staff->service_access ?? []
-                ];
-            });
+            $staffData = User::where('role', 'staff')
+                ->with('bidangs')
+                ->withCount(['assignedTasks as active_tasks' => function ($query) {
+                    $query->whereIn('status', ['assigned', 'in_progress', 'approved_admin']);
+                }])
+                ->get()
+                ->map(function ($staff) {
+                    return [
+                        'id' => $staff->id,
+                        'name' => $staff->name,
+                        'nip' => $staff->nip,
+                        'bidang' => $staff->bidang ?? '-',
+                        'bidangs' => $staff->bidangs ?? [],
+                        'attendance_status' => $staff->attendance_status,
+                        'active_task_count' => $staff->active_tasks,
+                        'is_overloaded' => $staff->active_tasks >= 2,
+                        'service_access' => $staff->service_access ?? []
+                    ];
+                });
 
             return response()->json([
                 'stats' => [
                     'total' => $totalTickets,
                     'completed' => $completedTickets,
                     'pending' => $pendingTickets,
+                    'in_progress' => $inProgressTickets,
                 ],
-                // ✅ Key-nya tetap rekap_tugas, tapi isi key di dalamnya now lowercase
+                'rekap_status' => $rekapStatus,
                 'rekap_tugas' => [
                     'it' => $rekapTugas['it'] ?? 0,
                     'zoom' => $rekapTugas['zoom'] ?? 0,
@@ -53,9 +68,13 @@ class DashboardController extends Controller
                 'staff' => $staffData
             ]);
 
-        } catch (\Exception $e) {
-            return response()->json(['message' => 'Gagal mengambil data dashboard', 'error' => $e->getMessage()], 500);
-        }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Gagal ambil data dashboard', [
+                    'error' => $e->getMessage(),
+                ]);
+
+                return response()->json(['message' => 'Gagal mengambil data dashboard. Silakan coba lagi.'], 500);
+            }
     }
 
     public function monitorStaff()
@@ -119,9 +138,10 @@ class DashboardController extends Controller
         // ✅ AMBIL TIKET YANG SUDAH MELEWATI JAM SELESAI DAN BELUM DI-DISPOSE
         $tickets = Ticket::with(['service', 'requester'])
             ->whereNull('assigned_staff_id')
-            ->whereNotNull('schedule_end') // Pastikan ini layanan yang punya jam selesai (Zoom/CC)
-            ->where('schedule_end', '<=', $now) // Jam selesai sudah lewat
-            ->orderBy('created_at', 'desc') // Yang paling baru di atas
+            ->whereNotIn('status', ['rejected', 'cancelled', 'completed'])
+            ->whereNotNull('schedule_end')
+            ->where('schedule_end', '<=', $now)
+            ->orderBy('created_at', 'desc')
             ->get();
 
         // Tidak perlu flag overdue, karena statusnya sudah pasti expired
@@ -153,10 +173,22 @@ class DashboardController extends Controller
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
         
         // ✅ PROTEKSI 1: Cek attendance_status di tabel users (case-insensitive)
-        $status = strtolower(trim($staff->attendance_status ?? ''));
-        if (in_array($status, ['cuti', 'sakit', 'izin', 'berhalangan hadir'])) {
+        if (!in_array($ticket->status, ['pending', 'queued', 'approved_admin', 'needs_reschedule'])) {
             return response()->json([
-                'message' => 'Gagal. Staff sedang berhalangan hadir sehingga tidak dapat menerima tugas.'
+                'message' => 'Tiket ini tidak dapat didisposisi (status saat ini: ' . $ticket->status . ').'
+            ], 422);
+        }
+
+        if (($staff->role ?? '') !== 'staff') {
+            return response()->json([
+                'message' => 'Penugasan hanya dapat ditujukan kepada akun dengan role Staff.'
+            ], 422);
+        }
+
+        $ticketCategory = strtolower($ticket->service->category ?? '');
+        if (!in_array($ticketCategory, $staff->service_access ?? [])) {
+            return response()->json([
+                'message' => 'Staff ini tidak memiliki hak akses untuk kategori layanan ' . ($ticket->service->category_label ?? $ticketCategory) . '.'
             ], 422);
         }
 
@@ -166,6 +198,23 @@ class DashboardController extends Controller
             ->whereDate('start_date', '<=', now()->toDateString())
             ->whereDate('end_date', '>=', now()->toDateString())
             ->exists();
+
+            if ($ticket->schedule_start && $ticket->schedule_end) {
+    $scheduleStart = \Carbon\Carbon::parse($ticket->schedule_start, 'Asia/Makassar')->toDateString();
+    $scheduleEnd = \Carbon\Carbon::parse($ticket->schedule_end, 'Asia/Makassar')->toDateString();
+
+    $leaveConflict = \App\Models\Leave::where('user_id', $staff->id)
+        ->whereIn('status', ['pending', 'active'])
+        ->whereDate('start_date', '<=', $scheduleEnd)
+        ->whereDate('end_date', '>=', $scheduleStart)
+        ->exists();
+
+    if ($leaveConflict) {
+        return response()->json([
+            'message' => 'Gagal. Staff memiliki izin/cuti yang beririsan dengan jadwal pelaksanaan layanan.'
+        ], 422);
+    }
+}
 
         if ($hasActiveLeave) {
             return response()->json([
@@ -225,14 +274,6 @@ class DashboardController extends Controller
         }
 
         $category = strtolower($service->category); 
-
-        // ✅ TAMBAHKAN BARIS INI UNTUK DEBUGGING SEMENTARA
-        \Log::info('=== DEBUG DISPOSISI STAFF ===', [
-            'id_yang_dikirim_fe' => $service_id,
-            'nama_layanan_yang_ditemukan' => $service->name,
-            'category_asli_dari_db' => $service->category,
-            'category_setelah_lower' => $category,
-        ]);
 
         $allStaff = \App\Models\User::where('role', 'staff')
             ->whereRaw("service_access @> ?", ['["' . $category . '"]'])
@@ -340,6 +381,12 @@ public function rejectLeave($leave_id)
         $ticket = \App\Models\Ticket::with(['service', 'requester'])->find($ticket_id);
         
         if (!$ticket) return response()->json(['message' => 'Tiket tidak ditemukan'], 404);
+
+        if (in_array($ticket->status, ['completed', 'cancelled', 'rejected', 'expired'])) {
+            return response()->json([
+                'message' => 'Tiket dengan status ini tidak dapat ditolak lagi.'
+            ], 422);
+        }
 
         if (trim($request->reason) === '') {
             return response()->json(['message' => 'Alasan penolakan wajib diisi.'], 422);

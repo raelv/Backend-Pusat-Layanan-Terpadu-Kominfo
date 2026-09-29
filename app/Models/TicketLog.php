@@ -43,6 +43,10 @@ class TicketLog extends Model
             return 'Sistem';
         }
 
+        if (($this->actor?->role ?? '') === 'pimpinan') {
+            return 'Pimpinan';
+        }
+
         $role = strtoupper($this->actor?->role ?? '');
         $name = $this->actor?->name ?? 'Unknown';
 

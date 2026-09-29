@@ -6,7 +6,6 @@ use Illuminate\Support\Str;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Staff\AttendanceController;
-use App\Http\Controllers\Admin\ServiceController;
 use App\Http\Controllers\TicketCommentController;
 use App\Http\Controllers\Api\TicketLogController;
 use App\Models\TicketReminderLog;
@@ -25,7 +24,7 @@ use App\Http\Controllers\ReportController;
 // 1. LANDING PAGE (PUBLIC, TANPA LOGIN)
 Route::get('/public/schedules', [LandingController::class, 'getSchedules']);
 
-// ✅ KALENDER PUBLIK
+// KALENDER PUBLIK
 Route::get('/public/calendar', function (Illuminate\Http\Request $request) {
     $request->validate([
         'month' => 'required|date_format:Y-m',
@@ -48,9 +47,16 @@ Route::get('/public/calendar', function (Illuminate\Http\Request $request) {
     $bookedDates = $query->get()->groupBy(function ($ticket) {
         return $ticket->schedule_start->format('Y-m-d');
     })->map(function ($tickets, $date) {
+        $zoomBookings = $tickets->filter(fn ($t) => $t->service->category === 'zoom')->count();
+        $ccBookings = $tickets->filter(fn ($t) => $t->service->category === 'command_center')->count();
+        $totalZoomLinks = \App\Models\ZoomLink::count();
+
+        $isFullyBooked = ($ccBookings >= 1)
+            || ($totalZoomLinks > 0 && $zoomBookings >= $totalZoomLinks);
+
         return [
             'date' => $date,
-            'is_fully_booked' => $tickets->count() >= 3,
+            'is_fully_booked' => $isFullyBooked,
             'bookings' => $tickets->map(function ($t) {
                 return [
                     'service' => $t->service->name,
@@ -66,7 +72,7 @@ Route::get('/public/calendar', function (Illuminate\Http\Request $request) {
     ]);
 });
 
-// ✅ INFO JAM OPERASIONAL
+// INFO JAM OPERASIONAL
 Route::get('/public/operational-hours', function () {
     return response()->json([
         "message" => "Informasi jam operasional layanan",
@@ -87,7 +93,7 @@ Route::get('/public/operational-hours', function () {
     ]);
 });
 
-// ✅ LOGIN DENGAN VALIDASI PASSWORD
+// LOGIN
 Route::post('/login', function (Request $request) {
     if (empty($request->login_id) || empty($request->password)) {
         return response()->json([
@@ -135,25 +141,23 @@ Route::post('/login', function (Request $request) {
             'message' => 'Email/NIP atau Password tidak valid'
         ], 401);
     }
-    
+
     $token = $user->createToken('api-token')->plainTextToken;
-    
+
     $userData = $user->toArray();
+    $userData['bidang'] = $user->bidang_array;
+
     if ($user->role === 'pimpinan') {
         $userData['name'] = 'Pimpinan';
-        $userData['bidang'] = 'Kepala Dinas Kominfo';
+        $userData['bidang'] = ['Kepala Dinas Kominfo'];
     }
 
     return response()->json([
-        'message' => 'Login Berhasil', 
-        'user' => $userData, 
+        'message' => 'Login Berhasil',
+        'user' => $userData,
         'token' => $token
     ]);
 })->middleware('throttle:10,1');
-
-// PUBLIC ROUTE PDF
-Route::get('tickets/{ticket}/preview-pdf', [TicketController::class, 'previewPdf']);
-Route::get('tickets/{ticket}/download-pdf', [TicketController::class, 'downloadPdf']);
 
 Route::post('/telegram/webhook', [TelegramWebhookController::class, 'handleWebhook']);
 
@@ -167,27 +171,53 @@ Route::middleware('auth:sanctum')->group(function () {
         return response()->json(['message' => 'Logout berhasil']);
     });
 
-    Route::get('/user/profile', function (Request $request) {
-        $user = $request->user();
-        $userData = $user->toArray();
-        
-        if ($user->role === 'pimpinan') {
-            $userData['name'] = 'Pimpinan';
-            $userData['bidang'] = 'Kepala Dinas Kominfo';
-        }
-        
-        return response()->json($userData);
-    });
-    
-    // --- AUDIT TRAIL ---
+Route::get('/auth/me', function (Request $request) {
+    $user = $request->user();
+
+    $userData = [
+        'id' => $user->id,
+        'name' => $user->name,
+        'email' => $user->email,
+        'nip' => $user->nip,
+        'role' => $user->role,
+        'bidang' => $user->bidang_array,
+    ];
+
+    if ($user->role === 'pimpinan') {
+        $userData['name'] = 'Pimpinan';
+        $userData['bidang'] = ['Kepala Dinas Kominfo'];
+    }
+
+    return response()->json([
+        'status' => 'success',
+        'user' => $userData,
+    ]);
+});
+
+Route::get('/user/profile', function (Request $request) {
+    $user = $request->user();
+    $userData = $user->toArray();
+    $userData['bidang'] = $user->bidang_array;
+
+    if ($user->role === 'pimpinan') {
+        $userData['name'] = 'Pimpinan';
+        $userData['bidang'] = ['Kepala Dinas Kominfo'];
+    }
+
+    return response()->json($userData);
+});
+
+    // AUDIT TRAIL
     Route::get('/tickets/{ticket}/logs', [TicketLogController::class, 'index']);
 
+    // QUICK SERVICES (JAM OPERASIONAL RESMI: HARI KERJA; IT & ZOOM 24 JAM, CC 07:30-16:00 DI-VALIDASI SAAT SUBMIT)
     Route::get('/quick-services', function () {
         $now = \Carbon\Carbon::now('Asia/Makassar');
-        $startTime = \Carbon\Carbon::createFromTime(7, 30, 0, 'Asia/Makassar');
-        $endTime = \Carbon\Carbon::createFromTime(22, 0, 0, 'Asia/Makassar');
+        $isWeekday = !$now->isWeekend();
 
-        $isOperational = $now->gte($startTime) && $now->lte($endTime);
+        $isWeekdayAndWorkingHours = $isWeekday
+            && $now->format('H:i') >= '07:30'
+            && $now->format('H:i') <= '16:00';
 
         $services = \App\Models\Service::select('id', 'name', 'slug', 'description')
             ->where('is_active', true)
@@ -195,13 +225,18 @@ Route::middleware('auth:sanctum')->group(function () {
             ->get();
 
         return response()->json([
-            'is_operational' => $isOperational,
-            'closure_message' => 'Layanan pengajuan telah ditutup dikarenakan jam operasionalnya telah selesai. (Jam Operasional: 07:30 - 22:00 WIB)',
+            'is_operational' => $isWeekday,
+            'operational' => [
+                'it' => $isWeekday,
+                'zoom' => $isWeekday,
+                'command_center' => $isWeekdayAndWorkingHours,
+            ],
+            'closure_message' => 'Pengajuan layanan ditutup pada hari Sabtu, Minggu, dan hari libur nasional. Jam operasional hari kerja: IT & Zoom 24 Jam, Command Center 07.30 - 16.00 WITA.',
             'services' => $services
         ]);
     });
 
-    // --- TELEGRAM SETTINGS ---
+    // TELEGRAM SETTINGS
     Route::prefix('user')->group(function () {
         Route::post('/generate-telegram-token', [TelegramWebhookController::class, 'generateToken'])->middleware('throttle:5,1');
         Route::post('/unlink-telegram', [TelegramWebhookController::class, 'unlinkTelegram']);
@@ -213,20 +248,20 @@ Route::middleware('auth:sanctum')->group(function () {
         });
     });
 
-    // --- DAFTAR AKUN ---
+    // DAFTAR AKUN (KHUSUS ADMIN/PIMPINAN/STAFF)
     Route::get('/users', function (Request $request) {
         $query = \App\Models\User::select('id', 'name', 'email', 'role', 'nip', 'attendance_status');
         if ($request->has('role')) {
             $query->where('role', $request->role);
         }
         return $query->orderBy('name', 'asc')->get();
-    });
+    })->middleware('role:admin,pimpinan,staff');
 
-    // --- EXPORT LAMA ---
+    // EXPORT PER-TIKET
     Route::get('tickets/{ticket}/export-word', [TicketController::class, 'exportWord'])->middleware('throttle:10,1');
     Route::get('tickets/{ticket}/export-excel-bukti', [TicketController::class, 'exportExcelBukti'])->middleware('throttle:10,1');
 
-    // --- SLA INFO ---
+    // SLA INFO
     Route::get('/sla-info', function () {
         return response()->json([
             'data' => [
@@ -237,10 +272,10 @@ Route::middleware('auth:sanctum')->group(function () {
         ]);
     });
 
-    // --- SLA MONITORING ---
+    // SLA MONITORING (KHUSUS ADMIN & PIMPINAN)
     Route::get('/admin/sla-monitoring', function (Illuminate\Http\Request $request) {
         $query = \App\Models\Ticket::with(['service', 'staff', 'requester']);
-        
+
         if ($request->has('sla_status') && $request->sla_status === 'overdue') {
             $query->whereNotNull('due_date')->where('due_date', '<', now())->whereNotIn('status', ['completed', 'rejected', 'cancelled']);
         } elseif ($request->has('sla_status') && $request->sla_status === 'approaching') {
@@ -280,31 +315,33 @@ Route::middleware('auth:sanctum')->group(function () {
             'message' => 'Data monitoring SLA berhasil diambil',
             'data' => $formatted
         ]);
-    });
+    })->middleware('role:pimpinan,admin');
 
-    // --- TIKET ---
+    // TIKET
     Route::post('/tickets', [TicketController::class, 'store'])->middleware('throttle:10,1');
     Route::match(['put', 'patch', 'delete'], 'tickets/{ticket}', [TicketController::class, 'update']);
     Route::get('tickets/{ticket}', [TicketController::class, 'show']);
     Route::get('/tickets', [TicketController::class, 'index']);
     Route::match(['put', 'post'], 'tickets/{ticket}/status', [TicketController::class, 'updateStatus'])->middleware('throttle:30,1');
-    Route::get('/active-schedules', [TicketController::class, 'getActiveSchedules']);
-    Route::get('tickets/{id}/resubmit-data', [TicketController::class, 'getResubmitData']); 
+    Route::get('tickets/{id}/resubmit-data', [TicketController::class, 'getResubmitData']);
 
-    // --- KOMENTAR ---
+    // PDF BUKTI LAYANAN (AUTH + CEK KEPEMILIKAN DI CONTROLLER)
+    Route::get('tickets/{ticket}/preview-pdf', [TicketController::class, 'previewPdf']);
+    Route::get('tickets/{ticket}/download-pdf', [TicketController::class, 'downloadPdf']);
+
+    // JADWAL AKTIF (KHUSUS ADMIN/PIMPINAN/STAFF)
+    Route::get('/active-schedules', [TicketController::class, 'getActiveSchedules'])->middleware('role:admin,pimpinan,staff');
+
+    // KOMENTAR
     Route::get('tickets/{ticket}/comments', [TicketCommentController::class, 'index']);
     Route::post('tickets/{ticket}/comments', [TicketCommentController::class, 'store'])->middleware('throttle:30,1');
 
-    // --- SKM & DOWNLOAD ---
-    Route::post('tickets/{ticket}/skm', [TicketController::class, 'submitSKM']);
-    Route::get('tickets/{ticket}/download', [TicketController::class, 'downloadPdf']);
-    
-    // --- ✅ PREVIEW FILE ATTACHMENT (INLINE) ---
+    // PREVIEW FILE ATTACHMENT (INLINE)
     Route::get('files/preview/{path}', [TicketController::class, 'previewFile'])
         ->where('path', '.*')
         ->middleware('throttle:30,1');
 
-    // --- DOWNLOAD SURAT PERMOHONAN ---
+    // DOWNLOAD SURAT PERMOHONAN
     Route::get('tickets/{ticket}/download-surat', function ($id) {
         $ticket = \App\Models\Ticket::find($id);
         if (!$ticket || !$ticket->surat_permohonan_path) {
@@ -319,32 +356,34 @@ Route::middleware('auth:sanctum')->group(function () {
         return \Illuminate\Support\Facades\Storage::disk('local')->download($ticket->surat_permohonan_path);
     });
 
-    // --- ✅ LAPORAN KOLEKTIF (DI LUAR GRUP ADMIN)
-    Route::get('/reports/export', [ReportController::class, 'getCollectiveData']);
-    Route::get('/reports/export-pdf', [ReportController::class, 'exportCollectivePdf'])->middleware('throttle:10,1');
-    Route::get('/reports/export-excel', [ReportController::class, 'exportCollectiveExcel'])->middleware('throttle:10,1');
+    // LAPORAN KOLEKTIF (KHUSUS ADMIN & PIMPINAN)
+    Route::middleware('role:pimpinan,admin')->group(function () {
+        Route::get('/reports/export', [ReportController::class, 'getCollectiveData']);
+        Route::get('/reports/export-pdf', [ReportController::class, 'exportCollectivePdf'])->middleware('throttle:10,1');
+        Route::get('/reports/export-excel', [ReportController::class, 'exportCollectiveExcel'])->middleware('throttle:10,1');
+    });
 
-    // --- ROUTE PIMPINAN ---SS
+    // ROUTE PIMPINAN
     Route::prefix('pimpinan')->middleware('role:pimpinan,admin')->group(function () {
         Route::get('/dashboard', [App\Http\Controllers\Pimpinan\DashboardController::class, 'index']);
         Route::get('/leaves', [App\Http\Controllers\Pimpinan\DashboardController::class, 'getLeaves']);
         Route::get('/dispositions/pending', [App\Http\Controllers\Pimpinan\DashboardController::class, 'getPendingDispositions']);
-        Route::get('/dispositions/expired', [App\Http\Controllers\Pimpinan\DashboardController::class, 'getExpiredDispositions']); 
+        Route::get('/dispositions/expired', [App\Http\Controllers\Pimpinan\DashboardController::class, 'getExpiredDispositions']);
         Route::get('/dispositions/staff/{service_id}', [App\Http\Controllers\Pimpinan\DashboardController::class, 'getAvailableStaffByService']);
         Route::post('/dispositions/assign/{ticket_id}', [App\Http\Controllers\Pimpinan\DashboardController::class, 'assignStaff'])->middleware('throttle:20,1');
         Route::post('/dispositions/reject/{ticket_id}', [App\Http\Controllers\Pimpinan\DashboardController::class, 'rejectTicket'])->middleware('throttle:20,1');
         Route::get('/tickets', [App\Http\Controllers\Pimpinan\DashboardController::class, 'getAllTickets']);
     });
 
-    // --- ROUTE STAFF ---
+    // ROUTE STAFF
     Route::prefix('staff')->middleware('role:staff')->group(function () {
         Route::get('/leaves', [AttendanceController::class, 'index']);
         Route::post('/leave', [AttendanceController::class, 'submitLeave'])->middleware('throttle:5,1');
         Route::put('/leaves/{id}', [AttendanceController::class, 'update']);
         Route::delete('/leaves/{id}', [AttendanceController::class, 'destroy']);
-        Route::get('/zoom-links/available', [App\Http\Controllers\Admin\ZoomLinkController::class, 'getAvailableLinks']); 
+        Route::get('/zoom-links/available', [App\Http\Controllers\Admin\ZoomLinkController::class, 'getAvailableLinks']);
         Route::post('/tickets/{ticket}/approve-reject', [TicketController::class, 'processByStaff'])->middleware('throttle:20,1');
-        
+
         Route::get('/reminders', function () {
             $staffId = Auth::id();
             return TicketReminderLog::with(['ticket.service'])
@@ -355,13 +394,13 @@ Route::middleware('auth:sanctum')->group(function () {
         });
     });
 
-    // --- ROUTE ADMIN ---
+    // ROUTE ADMIN
     Route::prefix('admin')->middleware('role:admin')->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index']);
         Route::get('/staff-monitoring', [DashboardController::class, 'monitorStaff']);
-        
+
         Route::get('/bidangs', [UserManagementController::class, 'getMasterBidangs']);
-        
+
         Route::get('/staff', function (Illuminate\Http\Request $request) {
             $query = \App\Models\User::where('role', 'staff');
 
@@ -377,11 +416,16 @@ Route::middleware('auth:sanctum')->group(function () {
                 $search = $request->search;
                 $query->where(function($q) use ($search) {
                     $q->where('name', 'ILIKE', "%{$search}%")
-                      ->orWhere('nip', 'ILIKE', "%{$search}%");
+                    ->orWhere('nip', 'ILIKE', "%{$search}%");
                 });
             }
 
-            $staffs = $query->with('bidangs')->orderBy('name', 'asc')->get();
+            $staffs = $query->with('bidangs')
+                ->withCount(['assignedTasks as active_tasks' => function ($q) {
+                    $q->whereIn('status', ['assigned', 'in_progress', 'approved_admin']);
+                }])
+                ->orderBy('name', 'asc')
+                ->get();
 
             $formatted = $staffs->map(function ($staff) {
                 return [
@@ -395,8 +439,8 @@ Route::middleware('auth:sanctum')->group(function () {
                     'bidangs' => $staff->bidangs,
                     'service_access' => $staff->service_access ?? [],
                     'attendance_status' => $staff->attendance_status,
-                    'active_task_count' => $staff->active_task_count ?? 0,
-                    'is_overloaded' => $staff->is_overloaded ?? false
+                    'active_task_count' => $staff->active_tasks,
+                    'is_overloaded' => $staff->active_tasks >= 2
                 ];
             });
 
@@ -412,7 +456,6 @@ Route::middleware('auth:sanctum')->group(function () {
                 return response()->json(['message' => 'Staff tidak ditemukan'], 404);
             }
 
-            // ✅ FIX: HARD BLOCK - Jangan cuma warning, tolak total!
             if (($user->active_task_count ?? 0) > 0) {
                 return response()->json([
                     'message' => "Gagal memperbarui data. Staff ini sedang melaksanakan {$user->active_task_count} tugas aktif. Data dikunci selama masih bertugas.",
@@ -434,7 +477,7 @@ Route::middleware('auth:sanctum')->group(function () {
             if ($request->has('service_access')) {
                 $user->service_access = $request->service_access;
             }
-            
+
             if ($request->has('bidang_ids') && !empty($request->bidang_ids)) {
                 $user->bidangs()->sync($request->bidang_ids);
             }
@@ -456,28 +499,25 @@ Route::middleware('auth:sanctum')->group(function () {
             ]);
         })->middleware('throttle:20,1');
 
-        // --- DISPOSITIONS ADMIN ---
+        // DISPOSITIONS ADMIN
         Route::get('/dispositions/pending', [DashboardController::class, 'getPendingDispositions']);
         Route::get('/dispositions/expired', [DashboardController::class, 'getExpiredDispositions']);
         Route::post('/dispositions/assign/{ticket_id}', [DashboardController::class, 'assignStaff'])->middleware('throttle:20,1');
-        Route::post('/dispositions/reject/{ticket_id}', [DashboardController::class, 'rejectTicket'])->middleware('throttle:20,1'); 
+        Route::post('/dispositions/reject/{ticket_id}', [DashboardController::class, 'rejectTicket'])->middleware('throttle:20,1');
         Route::get('/dispositions/staff/{service_id}', [DashboardController::class, 'getAvailableStaffByService']);
-        
-        Route::apiResource('services', ServiceController::class);
-        
-        // --- MANAJEMEN PENGGUNA ---
+
+        // MANAJEMEN PENGGUNA
         Route::put('/users/{id}', function (Request $request, $id) {
             $user = \App\Models\User::find($id);
             if (!$user) {
                 return response()->json(['message' => 'User tidak ditemukan'], 404);
             }
 
-            // ✅ FIX: HARD BLOCK - Jangan cuma warning, tolak total!
             if ($user->role === 'staff' && ($user->active_task_count ?? 0) > 0) {
                 return response()->json([
                     'message' => "Gagal memperbarui data. Staff ini sedang melaksanakan {$user->active_task_count} tugas aktif. Data dikunci selama masih bertugas.",
                     'error_field' => 'active_task'
-                ], 403); // 403 Forbidden
+                ], 403);
             }
 
             $request->validate([
@@ -492,7 +532,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 if (!in_array($user->role, ['staff', 'admin'])) {
                     return response()->json(['message' => 'Role Pimpinan dan OPD tidak dapat diubah di sini.'], 403);
                 }
-                
+
                 if ($request->role === 'staff') {
                     if (empty($request->access_list)) {
                         return response()->json(['message' => 'Hak Akses Layanan wajib dipilih jika role Staff.'], 422);
@@ -521,11 +561,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/users/role-options', [UserManagementController::class, 'getRoleOptions']);
         Route::get('/users/bidang-options', [UserManagementController::class, 'getBidangOptions']);
         Route::put('/users/{id}/role', [UserManagementController::class, 'updateRole'])->middleware('throttle:20,1');
-        Route::put('/users/{id}/bidang', [UserManagementController::class, 'updateBidang'])->middleware('throttle:20,1');
         Route::put('/users/{id}/service-access', [UserManagementController::class, 'updateServiceAccess'])->middleware('throttle:20,1');
         Route::put('/users/{id}/bidang', [UserManagementController::class, 'syncUserBidangs']);
 
-        // --- KICK USER ---
+        // KICK USER
         Route::post('/users/{id}/kick', function ($id) {
             $user = \App\Models\User::find($id);
             if (!$user) {
@@ -534,21 +573,21 @@ Route::middleware('auth:sanctum')->group(function () {
             $user->tokens()->delete();
             return response()->json(['message' => "Berhasil mengeluarkan user {$user->name} dari sistem."]);
         });
-        
-        // --- MANAJEMEN CUTI ---
+
+        // MANAJEMEN CUTI
         Route::get('/leaves', function() {
             return \App\Models\Leave::with('user:id,name,role,attendance_status')->get();
         });
         Route::put('/leaves/{id}/approve', [DashboardController::class, 'approveLeave'])->middleware('throttle:20,1');
         Route::put('/leaves/{id}/reject', [DashboardController::class, 'rejectLeave'])->middleware('throttle:20,1');
 
-        // --- MANAJEMEN ZOOM ---
+        // MANAJEMEN ZOOM
         Route::get('/zoom-links', [App\Http\Controllers\Admin\ZoomLinkController::class, 'index']);
         Route::post('/zoom-links', [App\Http\Controllers\Admin\ZoomLinkController::class, 'store'])->middleware('throttle:10,1');
         Route::put('/zoom-links/{id}', [App\Http\Controllers\Admin\ZoomLinkController::class, 'update'])->middleware('throttle:20,1');
         Route::delete('/zoom-links/{id}', [App\Http\Controllers\Admin\ZoomLinkController::class, 'destroy'])->middleware('throttle:10,1');
 
-        // ✅ HANYA WORD YANG DI GRUP ADMIN
+        // EXPORT WORD KOLEKTIF (KHUSUS ADMIN)
         Route::post('/reports/export-word', [ReportController::class, 'exportCollectiveWord'])->middleware('throttle:10,1');
     });
 });

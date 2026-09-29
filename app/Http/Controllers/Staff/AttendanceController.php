@@ -20,6 +20,18 @@ class AttendanceController extends Controller
             'reason'     => 'required|string|max:500',
         ]);
 
+         $isOverlapping = Leave::where('user_id', Auth::id())
+        ->whereIn('status', ['pending', 'active'])
+        ->whereDate('start_date', '<=', $request->end_date)
+        ->whereDate('end_date', '>=', $request->start_date)
+        ->exists();
+
+        if ($isOverlapping) {
+            return response()->json([
+                'message' => 'Tanggal pengajuan tumpang tindih dengan izin/cuti yang sudah ada sebelumnya.'
+            ], 422);
+        }
+
         $leave = Leave::create([
             'user_id'    => Auth::id(),
             'type'       => $request->type,
@@ -76,6 +88,19 @@ class AttendanceController extends Controller
             'end_date'   => 'required|date|after_or_equal:start_date',
             'reason'     => 'required|string|max:500',
         ]);
+
+         $isOverlapping = Leave::where('user_id', Auth::id())
+        ->where('id', '!=', $leave->id)
+        ->whereIn('status', ['pending', 'active'])
+        ->whereDate('start_date', '<=', $request->end_date)
+        ->whereDate('end_date', '>=', $request->start_date)
+        ->exists();
+
+        if ($isOverlapping) {
+            return response()->json([
+                'message' => 'Tanggal pengajuan tumpang tindih dengan izin/cuti yang sudah ada sebelumnya.'
+            ], 422);
+        }
 
         $leave->update([
             'type'       => $request->type,

@@ -92,7 +92,7 @@ class TelegramWebhookController extends Controller
         // Simpan token ke Cache selama 30 menit
         Cache::put('telegram_binding_' . $token, $user->id, now()->addMinutes(30));
 
-        $botUsername = env('TELEGRAM_BOT_USERNAME');
+        $botUsername = config('services.telegram.bot_username');
         $deepLink = "https://t.me/{$botUsername}?start={$token}";
 
         return response()->json([
@@ -117,7 +117,7 @@ class TelegramWebhookController extends Controller
      */
     private function sendMessage($chatId, $text)
     {
-        $botToken = env('TELEGRAM_BOT_TOKEN');
+         $botToken = config('services.telegram.bot_token');
         
         Http::post("https://api.telegram.org/bot{$botToken}/sendMessage", [
             'chat_id' => $chatId,

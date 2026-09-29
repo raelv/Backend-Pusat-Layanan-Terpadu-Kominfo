@@ -10,7 +10,7 @@ class EnsureRole
     public function handle(Request $request, Closure $next, ...$roles)
     {
         if (!$request->user()) {
-            return response()->json(['message' => 'Unauthorized.'], 401);
+            abort(401, 'Unauthenticated.');
         }
 
         if (!in_array($request->user()->role, $roles)) {

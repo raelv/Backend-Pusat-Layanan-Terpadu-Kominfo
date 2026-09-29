@@ -31,16 +31,23 @@ class SendZoomReminderJob implements ShouldQueue
             return;
         }
 
-        // Hanya untuk layanan Zoom
         if (strtolower($ticket->service->category ?? '') !== 'zoom') {
             return;
         }
 
-        // Jika tiket sudah selesai/ditolak/batal, jangan kirim notifikasi
         if (in_array($ticket->status, ['completed', 'rejected', 'cancelled'])) {
             return;
         }
 
+        $dedupKey = $this->type === 'before_start' ? 'ZOOM_BEFORE_START' : 'ZOOM_AFTER_END';
+
+        $alreadySent = \App\Models\TicketReminderLog::where('ticket_id', $ticket->id)
+            ->where('reminder_level', $dedupKey)
+            ->exists();
+
+        if ($alreadySent) {
+            return;
+        }
         $opdChatId = $ticket->requester->telegram_chat_id ?? null;
         if (!$opdChatId) {
             return;
@@ -79,6 +86,14 @@ class SendZoomReminderJob implements ShouldQueue
                     "━━━━━━━━━━━━━━━━━━━\n" .
                     "_Silakan menunggu atau menghubungi Staff._";
             }
+
+            \App\Models\TicketReminderLog::create([
+            'ticket_id' => $ticket->id,
+            'staff_id' => $ticket->assigned_staff_id,
+            'reminder_level' => $dedupKey,
+            'message' => "Pengingat {$dedupKey} terkirim ke OPD.",
+            'sent_at' => now(),
+        ]);
 
             SendTelegramJob::dispatch($message, $opdChatId);
 

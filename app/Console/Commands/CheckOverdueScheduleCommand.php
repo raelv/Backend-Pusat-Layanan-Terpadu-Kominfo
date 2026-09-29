@@ -23,7 +23,7 @@ class CheckOverdueScheduleCommand extends Command
             ->whereNull('assigned_staff_id')
             ->whereNull('overdue_notified_at') // cek flag ini
             ->whereHas('service', function ($q) {
-                $q->whereRaw("LOWER(category) IN ('zoom', 'command center')");
+                 $q->whereRaw("LOWER(category) IN ('zoom', 'command_center')");
             })
             ->whereNotNull('schedule_start')
             ->where('schedule_start', '<=', $now)

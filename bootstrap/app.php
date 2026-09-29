@@ -13,42 +13,86 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/routes/console.php',
         health: '/up',
     )
-    ->withMiddleware(function (Middleware $middleware): void {
-        // ✅ SECURITY HEADERS (GLOBAL)
-        $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
+        ->withMiddleware(function (Middleware $middleware): void {
+            $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
 
-        $middleware->alias([
-            'role' => \App\Http\Middleware\EnsureRole::class,
-        ]);
-    })
-    ->withExceptions(function (Exceptions $exceptions): void {
-        // Tangani AuthenticationException secara khusus agar mengembalikan status 401
-        $exceptions->render(function (AuthenticationException $e, Request $request) {
-            if ($request->expectsJson() || $request->is('api*') || !empty($request->header('Authorization'))) {
-                return response()->json([
-                    'message' => 'Unauthenticated.',
-                ], 401);
+            $middleware->alias([
+                'role' => \App\Http\Middleware\EnsureRole::class,
+            ]);
+
+            $middleware->redirectGuestsTo(fn () => null);
+        })
+->withExceptions(function (Exceptions $exceptions): void {
+    $exceptions->shouldRenderJsonWhen(
+        fn (Request $request, Throwable $e) =>
+            $request->expectsJson()
+            || $request->is('api/*')
+            || $request->is('api')
+            || str_starts_with($request->getPathInfo(), '/api')
+            || !empty($request->header('Authorization'))
+    );
+
+    $exceptions->render(function (AuthenticationException $e, Request $request) {
+        return response()->json([
+            'message' => 'Unauthenticated.',
+        ], 401);
+    });
+
+    $exceptions->render(function (\Illuminate\Http\Exceptions\HttpResponseException $e, Request $request) {
+        $response = $e->getResponse();
+
+        if ($response instanceof \Illuminate\Http\RedirectResponse) {
+            return response()->json([
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        return $response;
+    });
+
+    $exceptions->render(function (\Illuminate\Validation\ValidationException $e, Request $request) {
+        if ($request->expectsJson() || $request->is('api/*')) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors' => $e->errors(),
+            ], 422);
+        }
+
+        return null;
+    });
+
+    $exceptions->render(function (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e, Request $request) {
+        if ($request->expectsJson() || $request->is('api/*')) {
+            $statusCode = $e->getStatusCode();
+
+            return response()->json([
+                'message' => $statusCode === 500
+                    ? 'Terjadi kesalahan internal pada server.'
+                    : ($e->getMessage() ?: 'Terjadi kesalahan.'),
+            ], $statusCode);
+        }
+
+        return null;
+    });
+
+    $exceptions->render(function (Throwable $exception, $request) {
+        if ($request->expectsJson() || $request->is('api/*')) {
+            $statusCode = method_exists($exception, 'getStatusCode')
+                ? $exception->getStatusCode()
+                : 500;
+
+            if ($statusCode === 422) {
+                return null;
             }
-        });
 
-        $exceptions->render(function (Throwable $exception, $request) {
-            if ($request->expectsJson() || $request->is('api*')) {
-                $statusCode = method_exists($exception, 'getStatusCode') 
-                    ? $exception->getStatusCode() 
-                    : 500;
+            return response()->json([
+                'message' => ($statusCode === 500
+                    ? 'Terjadi kesalahan internal pada server.'
+                    : ($exception->getMessage() ?: 'Terjadi kesalahan.')),
+                'error' => config('app.debug') ? $exception->getMessage() : null
+            ], $statusCode);
+        }
 
-                if ($statusCode === 422) {
-                    return null; 
-                }
-
-                return response()->json([
-                    'message' => ($statusCode === 500 
-                        ? 'Terjadi kesalahan internal pada server.' 
-                        : ($exception->getMessage() ?: 'Terjadi kesaluran.')),
-                    'error' => config('app.debug') ? $exception->getMessage() : null
-                ], $statusCode);
-            }
-
-            return null;
-        });
-    })->create();
+        return null;
+    });
+})->create();

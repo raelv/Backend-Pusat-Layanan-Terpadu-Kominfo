@@ -37,7 +37,7 @@ class TicketCommentController extends Controller
     {
         $request->validate([
             'message' => 'nullable|string|max:2000',
-            'file' => 'nullable|file|mimes:jpg,jpeg,png,pdf,docx,xlsx|max:10240',
+            'file' => 'nullable|file|mimes:pdf,jpg,jpeg,png,webp|max:10240',
         ]);
 
         $ticket = Ticket::with(['service', 'requester', 'staff'])->find($ticket_id);
@@ -57,6 +57,10 @@ class TicketCommentController extends Controller
             return response()->json(['message' => 'Ruang diskusi belum bisa digunakan. Tiket belum ditangani oleh Staff.'], 403);
         }
 
+        if (in_array($ticket->status, ['completed', 'cancelled', 'rejected', 'expired'])) {
+        return response()->json(['message' => 'Ruang diskusi telah ditutup untuk tiket ini.'], 403);
+        }
+
         if (!$request->message && !$request->hasFile('file')) {
             return response()->json(['message' => 'Pesan atau lampiran file harus diisi.'], 422);
         }
@@ -64,7 +68,7 @@ class TicketCommentController extends Controller
         try {
             $filePath = null;
             if ($request->hasFile('file')) {
-                $filePath = $request->file('file')->store('comments', 'public');
+                $filePath = $request->file('file')->store('comments', 'local');
             }
 
             $comment = TicketComment::create([
@@ -114,7 +118,7 @@ class TicketCommentController extends Controller
             );
 
         } catch (\Exception $e) {
-            if (isset($filePath)) Storage::disk('public')->delete($filePath);
+            if (isset($filePath)) Storage::disk('local')->delete($filePath);
             return response()->json([
                 'message' => 'Gagal menyimpan komentar',
                 'error' => $e->getMessage()

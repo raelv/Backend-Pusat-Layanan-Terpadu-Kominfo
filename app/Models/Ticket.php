@@ -18,7 +18,8 @@ class Ticket extends Model
         'schedule_start', 'schedule_end', 
         'due_date', 'assigned_at', 'estimated_days', 'completed_at', 
         'status', 'is_skm_filled', 'rejection_reason',
-        'zoom_link_id', 'disposed_at', 'overdue_notified_at', 'is_sla_notified'
+        'zoom_link_id', 'disposed_at', 'overdue_notified_at', 'is_sla_notified',
+        'resubmitted_at'
     ];
     protected $casts = [
         'form_data' => 'array',
@@ -27,7 +28,8 @@ class Ticket extends Model
         'due_date' => 'datetime',
         'assigned_at' => 'datetime',
         'completed_at' => 'datetime',
-        'overdue_notified_at' => 'datetime', // ✅ TAMBAHKAN
+        'overdue_notified_at' => 'datetime',
+        'resubmitted_at' => 'datetime',
     ];
 
     public function service(): BelongsTo
@@ -87,111 +89,97 @@ class Ticket extends Model
     // Tambahkan method ini
     public function getRemainingDaysAttribute()
     {
-        // 1. Return null jika sudah selesai, ditolak, atau tidak ada due_date
-        if (in_array($this->status, ['completed', 'rejected', 'cancelled']) || is_null($this->due_date)) {
+        if (in_array($this->status, ['completed', 'rejected', 'cancelled', 'expired']) || is_null($this->due_date)) {
             return null;
         }
 
         $now = \Carbon\Carbon::now('Asia/Makassar')->startOfDay();
-        $dueDate = $this->due_date->startOfDay();
+        $dueDate = $this->due_date->copy()->startOfDay();
 
-        // ✅ PENGECEKAN EXCEPTION: Khusus Layanan IT, pakai selisih hari kalender biasa
         if ($this->service && strtolower($this->service->category) === 'it') {
-            $diff = $now->diffInDays($dueDate, false); // false = mengembalikan angka negatif jika sudah lewat
-            return $diff === 0 ? 0 : $diff; 
+            $diff = $now->diffInDays($dueDate, false);
+            return $diff === 0 ? 0 : $diff;
         }
 
-        // --- LOGIKA LAMA UNTUK ZOOM & COMMAND CENTER (Menghitung Hari Kerja) ---
-        
-        // Daftar hari libur nasional (Format m-d)
-        $holidays = [
-            '01-01', '25-03', '29-03', '01-05', '10-05', 
-            '01-06', '07-06', '17-08', '16-09', '20-12', '25-12', '26-12'
-        ];
-
-        // Pastikan start date lebih kecil dari end date untuk perhitungan
         $startDate = $now->lt($dueDate) ? $now : $dueDate;
         $endDate = $now->lt($dueDate) ? $dueDate : $now;
 
-        // 2. Hitung total hari kalender
         $totalDays = $startDate->diffInDays($endDate);
 
-        // 3. Hitung total weekend (Sabtu & Minggu) secara matematis
         $weeks = floor($totalDays / 7);
         $remainingDays = $totalDays % 7;
-        
-        $weekendCount = ($weeks * 2); 
-        $currentDay = $startDate->dayOfWeek; 
+
+        $weekendCount = ($weeks * 2);
+        $currentDay = $startDate->dayOfWeek;
         for ($i = 0; $i < $remainingDays; $i++) {
-            if (in_array(($currentDay + $i) % 7, [0, 6])) { 
+            if (in_array(($currentDay + $i) % 7, [0, 6])) {
                 $weekendCount++;
             }
         }
 
-        // 4. Hitung total hari libur nasional yang jatuh di hari kerja
+        $holidayDates = \App\Models\Holiday::pluck('date')->map(fn ($d) => $d->format('m-d'))->toArray();
+
         $holidayCount = 0;
         $period = \Carbon\CarbonPeriod::create($startDate, $endDate);
         foreach ($period as $day) {
-            if (!$day->isWeekend() && in_array($day->format('m-d'), $holidays)) {
+            if (!$day->isWeekend() && in_array($day->format('m-d'), $holidayDates)) {
                 $holidayCount++;
             }
         }
 
-        // 5. Hitung sisa hari kerja aktual
         $workingDays = $totalDays - $weekendCount - $holidayCount;
 
-        // 6. Return negatif jika sudah lewat, positif jika masih tersisa
         return $now->gt($dueDate) ? (-$workingDays) : $workingDays;
     }
 
-public function getReportTitleAttribute()
-{
-    $candidates = [
-        'nama_aplikasi', 'namaAplikasi',
-        'topik',
-        'nama_acara', 'namaAcara',
-        'nama_kegiatan', 'namaKegiatan',
-        'tema',
-        'acara',
-        'agenda',
-        'nama_rapat', 'namaRapat',
-        'judul_rapat', 'judulRapat',
-        'judul_acara', 'judulAcara',
-        'judul',
-        'perihal',
-        'keperluan',
-        'materi',
-        'topikMeeting', 'topik_meeting',
-    ];
+    public function getReportTitleAttribute()
+    {
+        $candidates = [
+            'nama_aplikasi', 'namaAplikasi',
+            'topik',
+            'nama_acara', 'namaAcara',
+            'nama_kegiatan', 'namaKegiatan',
+            'tema',
+            'acara',
+            'agenda',
+            'nama_rapat', 'namaRapat',
+            'judul_rapat', 'judulRapat',
+            'judul_acara', 'judulAcara',
+            'judul',
+            'perihal',
+            'keperluan',
+            'materi',
+            'topikMeeting', 'topik_meeting',
+        ];
 
-    $form = $this->form_data ?? [];
+        $form = $this->form_data ?? [];
 
-    foreach ($candidates as $key) {
-        if (isset($form[$key]) && $form[$key] !== '' && $form[$key] !== null && $form[$key] !== []) {
-            $value = $form[$key];
-            return is_array($value) ? implode(', ', array_map('strval', $value)) : trim((string) $value);
+        foreach ($candidates as $key) {
+            if (isset($form[$key]) && $form[$key] !== '' && $form[$key] !== null && $form[$key] !== []) {
+                $value = $form[$key];
+                return is_array($value) ? implode(', ', array_map('strval', $value)) : trim((string) $value);
+            }
         }
+
+        return $this->service->name ?? 'Tanpa Judul';
     }
 
-    return $this->service->name ?? 'Tanpa Judul';
-}
+    public function getReportStaffNameAttribute()
+    {
+        if ($this->staff) {
+            return $this->staff->name;
+        }
 
-public function getReportStaffNameAttribute()
-{
-    if ($this->staff) {
-        return $this->staff->name;
+        $lastStaffLog = TicketLog::where('ticket_id', $this->id)
+            ->whereIn('action', ['CLAIMED', 'IN_PROGRESS', 'COMPLETED'])
+            ->whereNotNull('user_id')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($lastStaffLog && $lastStaffLog->actor) {
+            return $lastStaffLog->actor->name;
+        }
+
+        return 'Belum Ditugaskan';
     }
-
-    $lastStaffLog = TicketLog::where('ticket_id', $this->id)
-        ->whereIn('action', ['CLAIMED', 'IN_PROGRESS', 'COMPLETED'])
-        ->whereNotNull('user_id')
-        ->orderByDesc('id')
-        ->first();
-
-    if ($lastStaffLog && $lastStaffLog->actor) {
-        return $lastStaffLog->actor->name;
-    }
-
-    return 'Belum Ditugaskan';
-}
 }

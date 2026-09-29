@@ -21,8 +21,8 @@ class SendDeadlineReminders extends Command
     {
         $now = Carbon::now('Asia/Makassar');
         
-        $botToken = env('TELEGRAM_BOT_TOKEN');
-        $chatId = env('TELEGRAM_CHAT_ID');
+        $botToken = config('services.telegram.bot_token');
+        $chatId = config('services.telegram.chat_id');
 
         if (!$botToken || !$chatId) {
             $this->warn('TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID belum diatur');

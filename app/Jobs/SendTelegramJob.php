@@ -20,25 +20,36 @@ class SendTelegramJob implements ShouldQueue
     public function __construct($message, $chatId = null)
     {
         $this->message = is_string($message) ? $message : json_encode($message);
-        $this->chatId = $chatId ?? env('TELEGRAM_CHAT_ID'); // Kalau null, pakai Group Staff
+        $this->chatId = $chatId;
     }
 
-    public function handle(): void
-    {
-        $botToken = env('TELEGRAM_BOT_TOKEN');
+public function handle(): void
+{
+    $botToken = config('services.telegram.bot_token');
+    $chatId = $this->chatId ?? config('services.telegram.chat_id');
 
+    $response = Http::post("https://api.telegram.org/bot{$botToken}/sendMessage", [
+        'chat_id' => $chatId,
+        'text' => $this->message,
+        'parse_mode' => 'Markdown'
+    ]);
+
+    if (!$response->successful()) {
+        $plainText = str_replace(['*', '_', '`'], '', $this->message);
         $response = Http::post("https://api.telegram.org/bot{$botToken}/sendMessage", [
-            'chat_id' => $this->chatId,
-            'text' => $this->message,
-            'parse_mode' => 'Markdown'
+            'chat_id' => $chatId,
+            'text' => $plainText,
         ]);
-
-        if (!$response->successful()) {
-            $plainText = str_replace(['*', '_', '`'], '', $this->message);
-            Http::post("https://api.telegram.org/bot{$botToken}/sendMessage", [
-                'chat_id' => $this->chatId,
-                'text' => $plainText,
-            ]);
-        }
     }
+
+    if (!$response->successful()) {
+        \Illuminate\Support\Facades\Log::error('SendTelegramJob gagal', [
+            'chat_id' => $chatId,
+            'body' => $response->body(),
+        ]);
+    }
+}
+
+public $tries = 1;
+public $timeout = 30;
 }

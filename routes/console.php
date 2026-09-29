@@ -9,6 +9,7 @@ Schedule::command('tickets:check-sla')->everyFiveMinutes();
 Schedule::command('reminders:send-deadline')->everyMinute();
 Schedule::command('schedule:check-overdue')->everyFiveMinutes();
 Schedule::command('tickets:check-expired')->everyFiveMinutes();
+Schedule::command('attendance:reset-expired')->dailyAt('00:05');
 
 // ✅ PENGINGAT ZOOM: 15 menit sebelum jadwal dimulai
 Schedule::call(function () {

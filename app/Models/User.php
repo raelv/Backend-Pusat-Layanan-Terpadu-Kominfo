@@ -26,7 +26,7 @@ class User extends Authenticatable
         'service_access'
     ];
 
-    protected $hidden = ['password', 'remember_token'];
+    protected $hidden = ['password', 'remember_token', 'telegram_chat_id'];
     
     protected $casts = [
         'email_verified_at' => 'datetime',
@@ -71,5 +71,18 @@ class User extends Authenticatable
             return null; 
         }
         return $value;
+    }
+
+    public function getBidangArrayAttribute(): array
+    {
+        $list = $this->bidangs()->pluck('nama')->values()->toArray();
+
+        if (!empty($list)) {
+            return $list;
+        }
+
+        $single = $this->bidang;
+
+        return $single ? [$single] : [];
     }
 }
