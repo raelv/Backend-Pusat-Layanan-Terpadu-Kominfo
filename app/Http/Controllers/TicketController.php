@@ -381,54 +381,39 @@ class TicketController extends Controller
                 }
             }
 
-            if ($category === 'zoom') {
-                $totalLinks = \App\Models\ZoomLink::count();
+                if ($category === 'zoom') {
+                    $totalLinks = \App\Models\ZoomLink::count();
 
-                if ($totalLinks === 0) {
-                    return response()->json([
-                        'message' => 'Tidak ada link Zoom tersedia pada sistem. Silakan hubungi Admin.',
-                        'detail' => 'Belum ada link Zoom yang didaftarkan ke sistem SIKOMA.',
-                        'error_field' => 'schedule_start'
-                    ], 422);
+                    if ($totalLinks === 0) {
+                        return response()->json([
+                            'message' => 'Tidak ada link Zoom tersedia pada sistem. Silakan hubungi Admin.',
+                            'detail' => 'Belum ada link Zoom yang didaftarkan ke sistem SIKOMA.',
+                            'error_field' => 'schedule_start'
+                        ], 422);
+                    }
+
+                    $bookingDiJadwal = Ticket::whereHas('service', function ($q) {
+                        $q->where('category', 'zoom');
+                    })
+                    ->whereIn('status', ['assigned', 'in_progress', 'approved_admin'])
+                    ->whereNotNull('schedule_start')
+                    ->whereNotNull('schedule_end')
+                    ->where(function ($query) use ($newStart, $newEnd) {
+                        $query->where('schedule_start', '<', $newEnd)
+                            ->where('schedule_end', '>', $newStart);
+                    })
+                    ->count();
+
+                    if ($bookingDiJadwal >= $totalLinks) {
+                        return response()->json([
+                            'message' => 'Jadwal bentrok dengan booking Zoom lain.',
+                            'detail' => 'Seluruh link Zoom (' . $totalLinks . ') sudah dialokasikan untuk jadwal yang sudah disetujui pada jam tersebut (' . $bookingDiJadwal . ' booking). Silakan pilih jadwal berbeda.',
+                            'error_field' => 'schedule_start',
+                            'total_links' => $totalLinks,
+                            'bookings_in_slot' => $bookingDiJadwal
+                        ], 422);
+                    }
                 }
-
-                $totalAvailableLinks = \App\Models\ZoomLink::where('status', 'available')->count();
-
-                if ($totalAvailableLinks === 0) {
-                    return response()->json([
-                        'message' => 'Tidak ada link Zoom tersedia pada jam tersebut.',
-                        'detail' => 'Semua link Zoom (' . $totalLinks . ') sedang digunakan oleh layanan lain. Silakan pilih jadwal berbeda.',
-                        'error_field' => 'schedule_start',
-                        'total_links' => $totalLinks,
-                        'available_links' => 0
-                    ], 422);
-                }
-
-                $bookingDiJadwal = Ticket::whereHas('service', function ($q) {
-                    $q->where('category', 'zoom');
-                })
-                ->whereIn('status', ['pending', 'assigned', 'in_progress', 'approved_admin'])
-                ->whereNotNull('schedule_start')
-                ->whereNotNull('schedule_end')
-                ->where(function ($query) use ($newStart, $newEnd) {
-                    $query->where('schedule_start', '<', $newEnd)
-                        ->where('schedule_end', '>', $newStart);
-                })
-                ->count();
-
-                $sisaLink = $totalAvailableLinks - $bookingDiJadwal;
-
-                if ($sisaLink <= 0) {
-                    return response()->json([
-                        'message' => 'Jadwal bentrok dengan booking Zoom lain.',
-                        'detail' => 'Semua link Zoom pada jam tersebut sudah dipesan (' . $bookingDiJadwal . ' booking, ' . $totalAvailableLinks . ' link tersedia). Silakan pilih jadwal berbeda.',
-                        'error_field' => 'schedule_start',
-                        'total_links' => $totalLinks,
-                        'available_links' => $totalAvailableLinks,
-                        'bookings_in_slot' => $bookingDiJadwal
-                    ], 422);
-                }
-            }
         }
 
         if ($request->filled('resubmit_of')) {
