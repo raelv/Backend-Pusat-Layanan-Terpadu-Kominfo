@@ -93,53 +93,85 @@ Route::get('/public/operational-hours', function () {
     ]);
 });
 
-// LOGIN
+// LOGIN SSO (EMAIL DINAS ONLY)
 Route::post('/login', function (Request $request) {
-    if (empty($request->login_id) || empty($request->password)) {
+    $email = trim($request->input('email') ?? $request->input('login_id') ?? '');
+    $password = (string) $request->input('password', '');
+
+    if ($email === '' || $password === '') {
         return response()->json([
-            'message' => 'Email/NIP dan Password wajib diisi.'
+            'message' => 'Email dan Password wajib diisi.'
         ], 422);
     }
 
-    $password = $request->password;
-    $missing = [];
+    $email = strtolower($email);
 
-    if (strlen($password) < 8) {
-        $missing[] = 'minimal 8 karakter';
-    }
-    if (!preg_match('/[a-z]/', $password)) {
-        $missing[] = 'huruf kecil';
-    }
-    if (!preg_match('/[A-Z]/', $password)) {
-        $missing[] = 'huruf besar';
-    }
-    if (!preg_match('/[0-9]/', $password)) {
-        $missing[] = 'angka';
-    }
-    if (!preg_match('/[!@#$%^&*()_+\-=\[\]{}|;\':",.<>?\/\\\\`~]/', $password)) {
-        $missing[] = 'karakter khusus';
-    }
+    $allowedDomain = config('services.sso.allowed_domain', 'bontangkota.go.id');
 
-    if (!empty($missing)) {
-        $pesan = 'Password tidak valid. Harus mengandung ' . implode(', ', $missing) . '.';
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         return response()->json([
-            'message' => $pesan
+            'message' => 'Format email tidak valid: "' . $email . '". Login hanya menggunakan Email Dinas (@' . $allowedDomain . '), bukan NIP atau username lain.'
         ], 422);
     }
 
-    $loginId = trim($request->login_id);
-    $fieldType = filter_var($loginId, FILTER_VALIDATE_EMAIL) ? 'email' : 'nip';
-
-    if ($fieldType === 'email' && !str_ends_with($loginId, '@bontangkota.go.id')) {
-        return response()->json(['message' => 'Akses Ditolak. Hanya email @bontangkota.go.id.'], 403);
+    if (!str_ends_with($email, '@' . $allowedDomain)) {
+        return response()->json([
+            'message' => 'Domain email tidak diizinkan: "' . $email . '". Hanya email dengan domain @' . $allowedDomain . ' yang dapat digunakan untuk login (email dinas resmi).'
+        ], 403);
     }
 
-    $user = \App\Models\User::where($fieldType, $loginId)->first();
+    $user = \App\Models\User::whereRaw('LOWER(email) = ?', [$email])->first();
 
-    if (!$user || !\Illuminate\Support\Facades\Hash::check($request->password, $user->password)) {
+    if (!$user) {
+        \Illuminate\Support\Facades\Log::warning('Login gagal', [
+            'email' => $email,
+            'ip' => $request->ip(),
+            'reason' => 'email_not_found',
+        ]);
+
         return response()->json([
-            'message' => 'Email/NIP atau Password tidak valid'
+            'message' => 'Email tidak terdaftar: "' . $email . '" tidak ditemukan dalam sistem. Silakan hubungi Admin untuk pendaftaran akun.'
         ], 401);
+    }
+
+    $verifier = new \App\Services\SmtpSsoVerifier();
+    $result = $verifier->verify($user->email, $password);
+
+    if ($result['status'] === 'invalid_credentials') {
+        \Illuminate\Support\Facades\Log::warning('Login gagal', [
+            'email' => $email,
+            'ip' => $request->ip(),
+            'reason' => 'invalid_credentials',
+        ]);
+
+        return response()->json([
+            'message' => 'Password salah. ' . $result['message']
+        ], 401);
+    }
+
+    if ($result['status'] === 'domain_rejected') {
+        return response()->json(['message' => $result['message']], 403);
+    }
+
+    if ($result['status'] === 'unreachable') {
+        $localMatch = !empty($user->password)
+            && \Illuminate\Support\Facades\Hash::check($password, $user->password);
+
+        if (!$localMatch) {
+            \Illuminate\Support\Facades\Log::warning('Login gagal', [
+                'email' => $email,
+                'ip' => $request->ip(),
+                'reason' => 'unreachable_and_local_mismatch',
+            ]);
+
+            return response()->json([
+                'message' => 'Password salah. Mail server tidak dapat dijangkau dan password lokal tidak cocok. Coba lagi nanti.'
+            ], 401);
+        }
+
+        \Illuminate\Support\Facades\Log::warning('Login via fallback password lokal (mail server unreachable)', [
+            'user_id' => $user->id,
+        ]);
     }
 
     $token = $user->createToken('api-token')->plainTextToken;
@@ -171,46 +203,46 @@ Route::middleware('auth:sanctum')->group(function () {
         return response()->json(['message' => 'Logout berhasil']);
     });
 
-Route::get('/auth/me', function (Request $request) {
-    $user = $request->user();
+    Route::get('/auth/me', function (Request $request) {
+        $user = $request->user();
 
-    $userData = [
-        'id' => $user->id,
-        'name' => $user->name,
-        'email' => $user->email,
-        'nip' => $user->nip,
-        'role' => $user->role,
-        'bidang' => $user->bidang_array,
-    ];
+        $userData = [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'nip' => $user->nip,
+            'role' => $user->role,
+            'bidang' => $user->bidang_array,
+        ];
 
-    if ($user->role === 'pimpinan') {
-        $userData['name'] = 'Pimpinan';
-        $userData['bidang'] = ['Kepala Dinas Kominfo'];
-    }
+        if ($user->role === 'pimpinan') {
+            $userData['name'] = 'Pimpinan';
+            $userData['bidang'] = ['Kepala Dinas Kominfo'];
+        }
 
-    return response()->json([
-        'status' => 'success',
-        'user' => $userData,
-    ]);
-});
+        return response()->json([
+            'status' => 'success',
+            'user' => $userData,
+        ]);
+    });
 
-Route::get('/user/profile', function (Request $request) {
-    $user = $request->user();
-    $userData = $user->toArray();
-    $userData['bidang'] = $user->bidang_array;
+    Route::get('/user/profile', function (Request $request) {
+        $user = $request->user();
+        $userData = $user->toArray();
+        $userData['bidang'] = $user->bidang_array;
 
-    if ($user->role === 'pimpinan') {
-        $userData['name'] = 'Pimpinan';
-        $userData['bidang'] = ['Kepala Dinas Kominfo'];
-    }
+        if ($user->role === 'pimpinan') {
+            $userData['name'] = 'Pimpinan';
+            $userData['bidang'] = ['Kepala Dinas Kominfo'];
+        }
 
-    return response()->json($userData);
-});
+        return response()->json($userData);
+    });
 
     // AUDIT TRAIL
     Route::get('/tickets/{ticket}/logs', [TicketLogController::class, 'index']);
 
-    // QUICK SERVICES (JAM OPERASIONAL RESMI: HARI KERJA; IT & ZOOM 24 JAM, CC 07:30-16:00 DI-VALIDASI SAAT SUBMIT)
+    // QUICK SERVICES (JAM OPERASIONAL RESMI)
     Route::get('/quick-services', function () {
         $now = \Carbon\Carbon::now('Asia/Makassar');
         $isWeekday = !$now->isWeekend();
@@ -416,7 +448,7 @@ Route::get('/user/profile', function (Request $request) {
                 $search = $request->search;
                 $query->where(function($q) use ($search) {
                     $q->where('name', 'ILIKE', "%{$search}%")
-                    ->orWhere('nip', 'ILIKE', "%{$search}%");
+                      ->orWhere('nip', 'ILIKE', "%{$search}%");
                 });
             }
 
@@ -464,12 +496,25 @@ Route::get('/user/profile', function (Request $request) {
             }
 
             $request->validate([
+                'email' => 'sometimes|email|max:255|unique:users,email,' . $id,
                 'role' => 'sometimes|in:staff,admin',
                 'bidang_ids' => 'sometimes|array',
                 'bidang_ids.*' => 'exists:bidangs,id',
                 'service_access' => 'sometimes|array',
                 'service_access.*' => 'in:it,zoom,command_center'
             ]);
+
+            if ($request->has('email')) {
+                $emailBaru = strtolower(trim($request->email));
+
+                if (!str_ends_with($emailBaru, '@bontangkota.go.id')) {
+                    return response()->json([
+                        'message' => 'Email harus menggunakan domain dinas @bontangkota.go.id.'
+                    ], 422);
+                }
+
+                $user->email = $emailBaru;
+            }
 
             if ($request->has('role')) {
                 $user->role = $request->role;
@@ -521,12 +566,25 @@ Route::get('/user/profile', function (Request $request) {
             }
 
             $request->validate([
+                'email' => 'sometimes|email|max:255|unique:users,email,' . $id,
                 'role' => 'sometimes|in:staff,admin',
                 'bidang_ids' => 'sometimes|array',
                 'bidang_ids.*' => 'exists:bidangs,id',
                 'access_list' => 'sometimes|array',
                 'access_list.*' => 'in:it,zoom,command_center'
             ]);
+
+            if ($request->has('email')) {
+                $emailBaru = strtolower(trim($request->email));
+
+                if (!str_ends_with($emailBaru, '@bontangkota.go.id')) {
+                    return response()->json([
+                        'message' => 'Email harus menggunakan domain dinas @bontangkota.go.id.'
+                    ], 422);
+                }
+
+                $user->email = $emailBaru;
+            }
 
             if ($request->has('role')) {
                 if (!in_array($user->role, ['staff', 'admin'])) {

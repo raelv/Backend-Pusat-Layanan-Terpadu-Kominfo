@@ -41,4 +41,15 @@ return [
         'bot_username' => env('TELEGRAM_BOT_USERNAME'),
     ],
 
+    'sso' => [
+        'host' => env('SSO_MAIL_HOST', 'mail.bontangkota.go.id'),
+        'port' => (int) env('SSO_MAIL_PORT', 587),
+        'ehlo' => env('SSO_MAIL_EHLO', env('SSO_MAIL_HOST', 'mail.bontangkota.go.id')),
+        'allowed_domain' => env('SSO_ALLOWED_DOMAIN', 'bontangkota.go.id'),
+        'timeout' => (int) env('SSO_TIMEOUT', 10),
+        'bypass_local' => (bool) env('SSO_BYPASS_LOCAL', false),
+        'dev_password' => env('DEV_SSO_PASSWORD'),
+        'verify_tls' => (bool) env('SSO_VERIFY_TLS', false),
+    ],
+
 ];
